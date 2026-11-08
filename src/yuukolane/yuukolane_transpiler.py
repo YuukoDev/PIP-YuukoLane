@@ -1,6 +1,6 @@
 # yuukolane_transpiler.py
 import os
-import re, json, sys, io, tokenize, uuid
+import re, json, sys, io, tokenize, uuid, ast
 from pathlib import Path
 from .validador import validar_codigo
 
@@ -20,9 +20,9 @@ def _new_state(source):
 
 # ── proteção de strings & comentários ──────────────────────────────────────
 def proteger(codigo: str, state=None) -> str:
+    """Replace Python string and comment tokens with placeholders before translation."""
     if state is None:
         state = _new_state(codigo)
-    """Replace Python string and comment tokens with placeholders before translation."""
     linhas = codigo.splitlines(keepends=True)
     deslocamentos = [0]
     for linha in linhas:
@@ -57,7 +57,7 @@ def restaurar(codigo: str, state) -> str:
     return codigo
 
 # ── tradução lexical dos termos da linguagem ────────────────────────────────
-def traduzir_termos(codigo: str) -> str:
+def traduzir_termos(codigo: str, preservar_identificadores=False) -> str:
     linhas = codigo.splitlines(keepends=True)
     deslocamentos = [0]
     for linha in linhas:
@@ -87,6 +87,19 @@ def traduzir_termos(codigo: str) -> str:
                 compostos[partes] = traducao
     frases = sorted(compostos, key=lambda partes: (len(partes), sum(map(len, partes))), reverse=True)
 
+    # Names introduced by the program are not dictionary keywords.
+    protegidos = set()
+    if preservar_identificadores:
+        for i, t in enumerate(tokens):
+            if t.type != tokenize.NAME:
+                continue
+            anterior = tokens[i - 1].string if i else ""
+            proximo = tokens[i + 1].string if i + 1 < len(tokens) else ""
+            if anterior in ("def", "class", "definir", "funcao", "classe", "as"):
+                protegidos.add(t.string)
+            if proximo == "=" and (anterior in ("", "(", ",") or t.start[1] == 0):
+                protegidos.add(t.string)
+
     substituicoes = []
     indice_nome = 0
     while indice_nome < len(nomes):
@@ -110,8 +123,8 @@ def traduzir_termos(codigo: str) -> str:
         if encontrado:
             continue
 
-        traducao = simples.get(token.string)
-        if token.string == "somar":
+        traducao = token.string if token.string in protegidos else simples.get(token.string)
+        if token.string == "somar" and token.string not in protegidos:
             proximo = tokens[token_indice + 1] if token_indice + 1 < len(tokens) else None
             traducao = "sum" if proximo and proximo.type == tokenize.OP and proximo.string == "(" else "+"
         if traducao is not None and traducao != token.string:
@@ -177,7 +190,7 @@ def tratar_interpolacao(codigo: str, state) -> str:
 def converter(codigo_yl: str) -> str:
     state = _new_state(codigo_yl)
     codigo = proteger(codigo_yl, state)
-    codigo = traduzir_termos(codigo)
+    codigo = traduzir_termos(codigo, preservar_identificadores=True)
     codigo = corrigir_comparacoes(codigo)
     codigo = tratar_interpolacao(codigo, state)
 
