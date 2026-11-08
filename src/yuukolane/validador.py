@@ -81,10 +81,10 @@ def validar_contexto_blocos(codigo):
 
         # Valida comandos contextuais
         if re.search(r'\b(?:retornar|return)\b', linha_sem_espaco):
-            if not any(tipo in ("funcao", "async_funcao") for tipo, _ in escopo):
+            if not escopo or escopo[-1][0] not in ("funcao", "async_funcao"):
                 erros.append(f"YK201 - 'retornar' fora de função (linha {i+1})")
         if re.search(r'\bawait\b', linha_sem_espaco):
-            if not any(tipo == "async_funcao" for tipo, _ in escopo):
+            if not escopo or escopo[-1][0] != "async_funcao":
                 erros.append(f"YK202 - 'await' fora de função async (linha {i+1})")
 
     return erros
