@@ -1,6 +1,6 @@
 # yuukolane_transpiler.py
 import os
-import re, json, sys, io, tokenize, uuid, ast
+import re, json, sys, io, tokenize, uuid
 from pathlib import Path
 from .validador import validar_codigo
 
