@@ -1,6 +1,6 @@
 # yuukolane_transpiler.py
 import os
-import re, json, sys, io, tokenize
+import re, json, sys, io, tokenize, uuid
 from pathlib import Path
 from .validador import validar_codigo
 
@@ -12,14 +12,16 @@ with open(caminho_dicionario, encoding="utf-8") as f:
     DIC = json.load(f)
 
 # ── tokens temporários ──────────────────────────────────────────────────────
-TOKENS_STR, TOKENS_COM = {}, {}
-
-def _reset_tokens():
-    global TOKENS_STR, TOKENS_COM
-    TOKENS_STR, TOKENS_COM = {}, {}
+def _new_state(source):
+    prefix = "__YK_" + uuid.uuid4().hex + "_"
+    while prefix in source:
+        prefix = "__YK_" + uuid.uuid4().hex + "_"
+    return {"strings": {}, "comments": {}, "prefix": prefix}
 
 # ── proteção de strings & comentários ──────────────────────────────────────
-def proteger(codigo: str) -> str:
+def proteger(codigo: str, state=None) -> str:
+    if state is None:
+        state = _new_state(codigo)
     """Replace Python string and comment tokens with placeholders before translation."""
     linhas = codigo.splitlines(keepends=True)
     deslocamentos = [0]
@@ -35,12 +37,12 @@ def proteger(codigo: str) -> str:
         substituicoes = []
         for token in tokens:
             if token.type == tokenize.STRING:
-                marcador = f"__STR_{len(TOKENS_STR)}__"
-                TOKENS_STR[marcador] = token.string
+                marcador = f"{state['prefix']}STR_{len(state['strings'])}__"
+                state['strings'][marcador] = token.string
                 substituicoes.append((offset(token.start), offset(token.end), marcador))
             elif token.type == tokenize.COMMENT:
-                marcador = f"__COM_{len(TOKENS_COM)}__"
-                TOKENS_COM[marcador] = token.string
+                marcador = f"{state['prefix']}COM_{len(state['comments'])}__"
+                state['comments'][marcador] = token.string
                 substituicoes.append((offset(token.start), offset(token.end), marcador))
     except tokenize.TokenError as erro:
         raise SyntaxError(str(erro)) from erro
@@ -49,8 +51,8 @@ def proteger(codigo: str) -> str:
         codigo = codigo[:inicio] + marcador + codigo[fim:]
     return codigo
 
-def restaurar(codigo: str) -> str:
-    for tok, txt in {**TOKENS_COM, **TOKENS_STR}.items():   # restaura comentários e strings
+def restaurar(codigo: str, state) -> str:
+    for tok, txt in {**state["comments"], **state["strings"]}.items():
         codigo = codigo.replace(tok, txt)
     return codigo
 
@@ -121,46 +123,69 @@ def traduzir_termos(codigo: str) -> str:
     return codigo
 
 
-# ── correção ‘=’ → ‘==’ em cabeçalhos condicionais ─────────────────────────
-COND_PATTERN = re.compile(r'^(\s*)(if|elif|while)(\s+[^:]+?)\s*:', re.MULTILINE)
+# ── Conditional comparison sugar; preserve nested keyword arguments ──
 def corrigir_comparacoes(codigo: str) -> str:
-    def repl(m):
-        indent, kw, cond = m.groups()
-        cond_fix = re.sub(r'(?<![=!<>])=(?!=)', '==', cond)
-        return f"{indent}{kw}{cond_fix}:"
-    return COND_PATTERN.sub(repl, codigo)
+    linhas = codigo.splitlines(keepends=True)
+    saida = []
+    for linha in linhas:
+        try:
+            toks = list(tokenize.generate_tokens(io.StringIO(linha).readline))
+        except (tokenize.TokenError, IndentationError):
+            saida.append(linha)
+            continue
+        nomes = [t for t in toks if t.type not in (tokenize.INDENT, tokenize.DEDENT, tokenize.NL, tokenize.NEWLINE, tokenize.ENDMARKER)]
+        if not nomes or nomes[0].string not in ("if", "elif", "while"):
+            saida.append(linha)
+            continue
+        profundidade = 0
+        posicoes = []
+        for t in nomes[1:]:
+            if t.string in ("(", "[", "{"):
+                profundidade += 1
+            elif t.string in (")", "]", "}"):
+                profundidade -= 1
+            elif t.string == ":" and profundidade == 0:
+                break
+            elif t.string == "=" and profundidade == 0:
+                posicoes.append(t.start[1])
+        for pos in reversed(posicoes):
+            linha = linha[:pos] + "==" + linha[pos+1:]
+        saida.append(linha)
+    return "".join(saida)
 
 # ── saída de texto e interpolação ───────────────────────────────────────────
-def tratar_interpolacao(codigo: str) -> str:
+def tratar_interpolacao(codigo: str, state) -> str:
     def envolver_expressao(match):
         indent, expressao, comentario = match.groups()
         comentario = comentario or ""
         expressao = expressao.rstrip()
-        for token in re.findall(r'__STR_\d+__', expressao):
-            string = TOKENS_STR[token]
+        for token in state['strings']:
+            if token not in expressao:
+                continue
+            string = state['strings'][token]
             if '{' in string and '}' in string and not re.match(r'(?i)(?:f|fr|rf)[\'"]', string):
-                TOKENS_STR[token] = 'f' + string
+                state['strings'][token] = 'f' + string
         return f"{indent}print({expressao}){comentario}"
 
     return re.sub(
-        r'(?m)^([ \t]*)print[ \t]+(?!\()(.*?)([ \t]+__COM_\d+__)?$',
+        r'(?m)^([ \t]*)print[ \t]+(?!\()(.*?)([ \t]+__YK_[a-f0-9]+_COM_\d+__)?$',
         envolver_expressao,
         codigo,
     )
 
 
 def converter(codigo_yl: str) -> str:
-    _reset_tokens()
-    codigo = proteger(codigo_yl)
+    state = _new_state(codigo_yl)
+    codigo = proteger(codigo_yl, state)
     codigo = traduzir_termos(codigo)
     codigo = corrigir_comparacoes(codigo)
-    codigo = tratar_interpolacao(codigo)
+    codigo = tratar_interpolacao(codigo, state)
 
     # VALIDAÇÃO com strings e comentários protegidos
     validar_codigo(codigo)
 
     # restauração final de strings e comentários
-    codigo = restaurar(codigo)
+    codigo = restaurar(codigo, state)
     compile(codigo, "<yuukolane>", "exec")
     return codigo
 
