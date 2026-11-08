@@ -1,0 +1,39 @@
+name: Bug report
+description: Relate comportamento incorreto na YuukoLane
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Descrição
+      description: O que aconteceu?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Código mínimo e passos para reproduzir
+      description: Inclua código .yl e o comando executado, sem segredos.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Resultado esperado
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Resultado real / erro
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Ambiente
+      placeholder: "YuukoLane 0.1.0, Python 3.12, Linux"
+    validations:
+      required: true
