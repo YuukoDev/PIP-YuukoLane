@@ -1,0 +1,107 @@
+{
+  "estruturas": {
+    "se": "if",
+    "senao": "else",
+    "senao se": "elif",
+    "enquanto": "while",
+    "para": "for",
+    "com": "with",
+    "async": "async",
+    "esperar": "await",
+    "retornar": "return",
+    "continuar": "continue",
+    "parar": "break",
+    "vazio": "pass",
+    "tentar": "try",
+    "capturar": "except",
+    "exceto": "except",
+    "finalmente": "finally",
+    "lancar": "raise"
+  },
+
+  "funcoes_comuns": {
+    "mostrar": "print",
+    "entrada": "input",
+    "tamanho": "len",
+    "adicionar": "append",
+    "remover": "remove",
+    "ordenar": "sort",
+    "reverter": "reverse",
+    "str": "str",
+    "int": "int",
+    "float": "float",
+    "tipo": "type",
+    "abrir": "open",
+    "intervalo": "range",
+    "enumerar": "enumerate",
+    "mapear": "map",
+    "filtrar": "filter",
+    "todos": "all",
+    "algum": "any",
+    "somar": "sum",
+    "maximo": "max",
+    "minimo": "min",
+    "contar": "count",
+    "indexar": "index",
+    "copiar": "copy"
+  },
+
+  "valores": {
+    "verdadeiro": "True",
+    "falso": "False",
+    "nulo": "None",
+    "lista vazia": "[]",
+    "dicionario vazio": "{}",
+    "texto vazio": "''",
+    "conjunto vazio": "set()",
+    "tupla vazia": "()"
+  },
+
+  "operadores": {
+    "e": "and",
+    "ou": "or",
+    "nao": "not",
+    "igual": "==",
+    "diferente": "!=",
+    "maior": ">",
+    "menor": "<",
+    "maior ou igual": ">=",
+    "menor ou igual": "<=",
+    "somar": "+",
+    "subtrair": "-",
+    "multiplicar": "*",
+    "dividir": "/",
+    "divisao inteira": "//",
+    "resto": "%",
+    "potencia": "**",
+    "atribuir": "=",
+    "somar e atribuir": "+=",
+    "subtrair e atribuir": "-=",
+    "multiplicar e atribuir": "*=",
+    "dividir e atribuir": "/=",
+    "resto e atribuir": "%="
+  },
+
+  "tipos": {
+    "inteiro": "int",
+    "decimal": "float",
+    "texto": "str",
+    "lista": "list",
+    "dicionario": "dict",
+    "booleano": "bool",
+    "conjunto": "set",
+    "tupla": "tuple"
+  },
+
+  "outros": {
+    "global": "global",
+    "nao local": "nonlocal",
+    "is": "is",
+    "em": "in",
+    "del": "del",
+    "lambda": "lambda",
+    "classe": "class",
+    "definir": "def",
+    "funcao": "def"
+  }
+}

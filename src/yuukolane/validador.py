@@ -1,13 +1,28 @@
+import os
 import re
+import json
+
+# Carrega termos reservados do dicionário oficial
+CAMINHO_DICIONARIO = os.path.join(os.path.dirname(__file__), "dicionario.json")
+with open(CAMINHO_DICIONARIO, "r", encoding="utf-8") as f:
+    dicionario = json.load(f)
+
+# Conjunto de identificadores reservados derivados do dicionário
+PALAVRAS_RESERVADAS = set()
+for grupo in dicionario.values():
+    PALAVRAS_RESERVADAS.update(grupo.keys())
+PALAVRAS_RESERVADAS.update({"def", "import", "class", "True", "False", "None", "async", "await"})
+
+# Tokens que não podem receber valores (literais fixos)
+TOKENS_PROIBIDOS_ATRIB = {"verdadeiro", "falso", "nulo"}
 
 def contar_indentacao(linha):
     return len(linha) - len(linha.lstrip(' '))
 
 
 def validar_tokens_reservados(codigo):
-    """Impede atribuições para verdadeiro, falso, nenhum."""
+    """Impede atribuições para verdadeiro, falso, nulo."""
     linhas = codigo.splitlines()
-    tokens_proibidos = ["verdadeiro", "falso", "nenhum"]
     erros = []
     atrib_pattern = re.compile(r'^\s*([a-zA-Z_][\w]*)\s*=')
 
@@ -17,8 +32,25 @@ def validar_tokens_reservados(codigo):
         match = atrib_pattern.match(linha)
         if match:
             var = match.group(1)
-            if var in tokens_proibidos:
+            if var in TOKENS_PROIBIDOS_ATRIB:
                 erros.append(f"YK101 - Atribuição proibida a literal reservado '{var}' (linha {i+1})")
+    return erros
+
+
+def validar_identificadores_proibidos(codigo):
+    """Evita nomes de variáveis que são palavras reservadas."""
+    erros = []
+    linhas = codigo.splitlines()
+    atrib_pattern = re.compile(r'^\s*([a-zA-Z_][\w]*)\s*=')
+
+    for i, linha in enumerate(linhas):
+        if linha.strip().startswith("#"):
+            continue
+        match = atrib_pattern.match(linha)
+        if match:
+            nome = match.group(1)
+            if nome in PALAVRAS_RESERVADAS:
+                erros.append(f"YK102 - Identificador reservado '{nome}' usado como variável (linha {i+1})")
     return erros
 
 
@@ -48,31 +80,13 @@ def validar_contexto_blocos(codigo):
             escopo.append(("classe", indent))
 
         # Valida comandos contextuais
-        if re.search(r'\bretornar\b', linha_sem_espaco):
-            if not any(s[0] in ("funcao", "async_funcao") for s in escopo):
+        if re.search(r'\b(?:retornar|return)\b', linha_sem_espaco):
+            if not escopo or escopo[-1][0] not in ("funcao", "async_funcao"):
                 erros.append(f"YK201 - 'retornar' fora de função (linha {i+1})")
         if re.search(r'\bawait\b', linha_sem_espaco):
-            if not any(s[0] == "async_funcao" for s in escopo):
+            if not escopo or escopo[-1][0] != "async_funcao":
                 erros.append(f"YK202 - 'await' fora de função async (linha {i+1})")
 
-    return erros
-
-
-def validar_identificadores_proibidos(codigo):
-    """Evita nomes de variáveis reservados como 'def', 'import', etc."""
-    palavras_proibidas = {"def", "import", "class", "True", "False", "None", "async", "await"}
-    erros = []
-    linhas = codigo.splitlines()
-    atrib_pattern = re.compile(r'^\s*([a-zA-Z_][\w]*)\s*=')
-
-    for i, linha in enumerate(linhas):
-        if linha.strip().startswith("#"):
-            continue
-        match = atrib_pattern.match(linha)
-        if match:
-            nome = match.group(1)
-            if nome in palavras_proibidas:
-                erros.append(f"YK102 - Identificador reservado '{nome}' usado como variável (linha {i+1})")
     return erros
 
 

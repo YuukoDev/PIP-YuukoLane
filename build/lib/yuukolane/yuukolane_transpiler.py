@@ -1,10 +1,14 @@
 # yuukolane_transpiler.py
+import os
 import re, json, sys
 from pathlib import Path
-from validador import validar_codigo
+from .validador import validar_codigo
 
-# ── dicionário oficial ──────────────────────────────────────────────────────
-with open("dicionario.json", encoding="utf-8") as f:
+# Caminho absoluto do dicionario.json relativo a este arquivo:
+caminho_atual = os.path.dirname(__file__)
+caminho_dicionario = os.path.join(caminho_atual, "dicionario.json")
+
+with open(caminho_dicionario, encoding="utf-8") as f:
     DIC = json.load(f)
 
 # ── tokens temporários ──────────────────────────────────────────────────────
@@ -33,7 +37,7 @@ def proteger(codigo: str) -> str:
     return codigo
 
 def restaurar(codigo: str) -> str:
-    for tok, txt in {**TOKENS_COM, **TOKENS_STR}.items():   # restaura comentários primeiro
+    for tok, txt in {**TOKENS_COM, **TOKENS_STR}.items():   # restaura comentários e strings
         codigo = codigo.replace(tok, txt)
     return codigo
 
@@ -68,7 +72,7 @@ COND_PATTERN = re.compile(r'^(\s*)(if|elif|while)(\s+[^:]+?)\s*:', re.MULTILINE)
 def corrigir_comparacoes(codigo: str) -> str:
     def repl(m):
         indent, kw, cond = m.groups()
-        cond_fix = re.sub(r'(?<![=!<>])=(?!=)', '==', cond)  # evita ‘==’, ‘>=’ etc.
+        cond_fix = re.sub(r'(?<![=!<>])=(?!=)', '==', cond)
         return f"{indent}{kw}{cond_fix}:"
     return COND_PATTERN.sub(repl, codigo)
 
@@ -92,10 +96,11 @@ def converter(codigo_yl: str) -> str:
     codigo = corrigir_comparacoes(codigo)
     codigo = restaurar_operadores_compostos(codigo)
     codigo = tratar_interpolacao(codigo)
-    
-    # --- VALIDAÇÃO AQUI: com strings protegidas! ---
-    validar_codigo(codigo)  # Escopos, await, return, identificadores, literais
 
+    # VALIDAÇÃO com strings e comentários protegidos
+    validar_codigo(codigo)
+
+    # restauração final de strings e comentários
     codigo = restaurar(codigo)
     return codigo
 

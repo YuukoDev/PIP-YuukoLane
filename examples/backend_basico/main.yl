@@ -1,0 +1,90 @@
+import os
+import sqlite3
+from typing import List
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+app = FastAPI(title="Backend YuukoLane")
+
+
+classe Item(BaseModel):
+    id: int
+    nome: str
+    descricao: str = ""
+
+
+_caminho_banco = os.environ.get("YUUKOLANE_BACKEND_DB", "backend.db")
+_banco = sqlite3.connect(_caminho_banco, check_same_thread=False)
+_banco.row_factory = sqlite3.Row
+_banco.execute(
+    """
+    CREATE TABLE IF NOT EXISTS itens (
+        id INTEGER PRIMARY KEY,
+        nome TEXT NOT NULL,
+        descricao TEXT NOT NULL DEFAULT ''
+    )
+    """
+)
+_banco.commit()
+
+
+definir _item_da_linha(linha):
+    retornar Item(
+        id=linha["id"],
+        nome=linha["nome"],
+        descricao=linha["descricao"],
+    )
+
+
+@app.get("/itens", response_model=List[Item])
+definir listar_itens():
+    linhas = _banco.execute(
+        "SELECT id, nome, descricao FROM itens ORDER BY id"
+    ).fetchall()
+    retornar [_item_da_linha(linha) para linha em linhas]
+
+
+@app.get("/itens/{item_id}", response_model=Item)
+definir obter_item(item_id: int):
+    linha = _banco.execute(
+        "SELECT id, nome, descricao FROM itens WHERE id = ?",
+        (item_id,),
+    ).fetchone()
+    se linha is None:
+        lancar HTTPException(status_code=404, detail="Item não encontrado")
+    retornar _item_da_linha(linha)
+
+
+@app.post("/itens", response_model=Item, status_code=201)
+definir criar_item(item: Item):
+    tentar:
+        _banco.execute(
+            "INSERT INTO itens (id, nome, descricao) VALUES (?, ?, ?)",
+            (item.id, item.nome, item.descricao),
+        )
+        _banco.commit()
+    capturar sqlite3.IntegrityError:
+        lancar HTTPException(status_code=409, detail="Item já existe")
+    retornar item
+
+
+@app.put("/itens/{item_id}", response_model=Item)
+definir atualizar_item(item_id: int, item: Item):
+    cursor = _banco.execute(
+        "UPDATE itens SET nome = ?, descricao = ? WHERE id = ?",
+        (item.nome, item.descricao, item_id),
+    )
+    _banco.commit()
+    se cursor.rowcount == 0:
+        lancar HTTPException(status_code=404, detail="Item não encontrado")
+    retornar Item(id=item_id, nome=item.nome, descricao=item.descricao)
+
+
+@app.delete("/itens/{item_id}")
+definir remover_item(item_id: int):
+    cursor = _banco.execute("DELETE FROM itens WHERE id = ?", (item_id,))
+    _banco.commit()
+    se cursor.rowcount == 0:
+        lancar HTTPException(status_code=404, detail="Item não encontrado")
+    retornar {"removido": verdadeiro}

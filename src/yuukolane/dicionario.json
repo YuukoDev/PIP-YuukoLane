@@ -14,6 +14,7 @@
     "vazio": "pass",
     "tentar": "try",
     "capturar": "except",
+    "exceto": "except",
     "finalmente": "finally",
     "lancar": "raise"
   },

@@ -1,6 +1,6 @@
 # yuukolane_transpiler.py
 import os
-import re, json, sys
+import re, json, sys, io, tokenize
 from pathlib import Path
 from .validador import validar_codigo
 
@@ -11,8 +11,6 @@ caminho_dicionario = os.path.join(caminho_atual, "dicionario.json")
 with open(caminho_dicionario, encoding="utf-8") as f:
     DIC = json.load(f)
 
-# resto do código continua igual
-
 # ── tokens temporários ──────────────────────────────────────────────────────
 TOKENS_STR, TOKENS_COM = {}, {}
 
@@ -22,87 +20,148 @@ def _reset_tokens():
 
 # ── proteção de strings & comentários ──────────────────────────────────────
 def proteger(codigo: str) -> str:
-    def _str(m):
-        tok = f"__STR_{len(TOKENS_STR)}__"
-        TOKENS_STR[tok] = m.group(0)
-        return tok
-    def _com(m):
-        tok = f"__COM_{len(TOKENS_COM)}__"
-        TOKENS_COM[tok] = m.group(0)
-        return tok
+    """Replace Python string and comment tokens with placeholders before translation."""
+    linhas = codigo.splitlines(keepends=True)
+    deslocamentos = [0]
+    for linha in linhas:
+        deslocamentos.append(deslocamentos[-1] + len(linha))
 
-    # strings (simples & multilinha)
-    codigo = re.sub(r'(\"\"\".*?\"\"\"|\'\'\'.*?\'\'\'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')',
-                    _str, codigo, flags=re.DOTALL)
-    # comentários linha
-    codigo = re.sub(r'#.*', _com, codigo)
+    def offset(posicao):
+        linha, coluna = posicao
+        return deslocamentos[min(linha - 1, len(deslocamentos) - 1)] + coluna
+
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(codigo).readline)
+        substituicoes = []
+        for token in tokens:
+            if token.type == tokenize.STRING:
+                marcador = f"__STR_{len(TOKENS_STR)}__"
+                TOKENS_STR[marcador] = token.string
+                substituicoes.append((offset(token.start), offset(token.end), marcador))
+            elif token.type == tokenize.COMMENT:
+                marcador = f"__COM_{len(TOKENS_COM)}__"
+                TOKENS_COM[marcador] = token.string
+                substituicoes.append((offset(token.start), offset(token.end), marcador))
+    except tokenize.TokenError as erro:
+        raise SyntaxError(str(erro)) from erro
+
+    for inicio, fim, marcador in reversed(substituicoes):
+        codigo = codigo[:inicio] + marcador + codigo[fim:]
     return codigo
 
 def restaurar(codigo: str) -> str:
-    for tok, txt in {**TOKENS_COM, **TOKENS_STR}.items():   # restaura comentários primeiro
+    for tok, txt in {**TOKENS_COM, **TOKENS_STR}.items():   # restaura comentários e strings
         codigo = codigo.replace(tok, txt)
     return codigo
 
-# ── operadores compostos (‘somar’, ‘maior ou igual’ …) ─────────────────────
-def substituir_operadores_compostos(codigo: str) -> str:
-    compostos = sorted(
-        [k for k in DIC["operadores"] if " " in k],
-        key=len, reverse=True
-    )
-    for termo in compostos:
-        tok = f"__OP_{termo.upper().replace(' ', '_')}__"
-        codigo = re.sub(fr'\b{re.escape(termo)}\b', tok, codigo)
-    return codigo
+# ── tradução lexical dos termos da linguagem ────────────────────────────────
+def traduzir_termos(codigo: str) -> str:
+    linhas = codigo.splitlines(keepends=True)
+    deslocamentos = [0]
+    for linha in linhas:
+        deslocamentos.append(deslocamentos[-1] + len(linha))
 
-def restaurar_operadores_compostos(codigo: str) -> str:
-    for termo, py in DIC["operadores"].items():
-        if " " in termo:
-            tok = f"__OP_{termo.upper().replace(' ', '_')}__"
-            codigo = codigo.replace(tok, py)
-    return codigo
+    def offset(posicao):
+        linha, coluna = posicao
+        return deslocamentos[min(linha - 1, len(deslocamentos) - 1)] + coluna
 
-# ── tradução token-a-token (simples) ────────────────────────────────────────
-def traduzir_tokens_simples(codigo: str) -> str:
+    tokens = list(tokenize.generate_tokens(io.StringIO(codigo).readline))
+    nomes = [
+        (indice, token, offset(token.start), offset(token.end))
+        for indice, token in enumerate(tokens)
+        if token.type == tokenize.NAME
+    ]
+
+    simples = {}
+    compostos = {}
     for categoria, pares in DIC.items():
-        for pt, py in pares.items():
-            if " " not in pt:
-                codigo = re.sub(fr'\b{re.escape(pt)}\b', py, codigo)
+        for termo, traducao in pares.items():
+            partes = tuple(termo.split())
+            if termo == "somar" and categoria == "funcoes_comuns":
+                continue
+            if len(partes) == 1:
+                simples[partes[0]] = traducao
+            else:
+                compostos[partes] = traducao
+    frases = sorted(compostos, key=lambda partes: (len(partes), sum(map(len, partes))), reverse=True)
+
+    substituicoes = []
+    indice_nome = 0
+    while indice_nome < len(nomes):
+        token_indice, token, inicio, fim = nomes[indice_nome]
+        encontrado = False
+        for partes in frases:
+            if indice_nome + len(partes) > len(nomes):
+                continue
+            grupo = nomes[indice_nome:indice_nome + len(partes)]
+            if tuple(item[1].string for item in grupo) != partes:
+                continue
+            if any(
+                not re.fullmatch(r"[ \t]+", codigo[grupo[pos][3]:grupo[pos + 1][2]])
+                for pos in range(len(grupo) - 1)
+            ):
+                continue
+            substituicoes.append((grupo[0][2], grupo[-1][3], compostos[partes]))
+            indice_nome += len(partes)
+            encontrado = True
+            break
+        if encontrado:
+            continue
+
+        traducao = simples.get(token.string)
+        if token.string == "somar":
+            proximo = tokens[token_indice + 1] if token_indice + 1 < len(tokens) else None
+            traducao = "sum" if proximo and proximo.type == tokenize.OP and proximo.string == "(" else "+"
+        if traducao is not None and traducao != token.string:
+            substituicoes.append((inicio, fim, traducao))
+        indice_nome += 1
+
+    for inicio, fim, traducao in reversed(substituicoes):
+        codigo = codigo[:inicio] + traducao + codigo[fim:]
     return codigo
+
 
 # ── correção ‘=’ → ‘==’ em cabeçalhos condicionais ─────────────────────────
 COND_PATTERN = re.compile(r'^(\s*)(if|elif|while)(\s+[^:]+?)\s*:', re.MULTILINE)
 def corrigir_comparacoes(codigo: str) -> str:
     def repl(m):
         indent, kw, cond = m.groups()
-        cond_fix = re.sub(r'(?<![=!<>])=(?!=)', '==', cond)  # evita ‘==’, ‘>=’ etc.
+        cond_fix = re.sub(r'(?<![=!<>])=(?!=)', '==', cond)
         return f"{indent}{kw}{cond_fix}:"
     return COND_PATTERN.sub(repl, codigo)
 
-# ── interpolação: mostrar "…" → print(f"…") ────────────────────────────────
+# ── saída de texto e interpolação ───────────────────────────────────────────
 def tratar_interpolacao(codigo: str) -> str:
-    def repl(m):
-        s = m.group(1)
-        if '{' in s and '}' in s and not re.match(r'f[\'"]', s):
-            s = 'f' + s
-        return f"print({s})"
-    pattern = r'(?<!\.)\bmostrar\b\s+(("""(?:.|\n)*?"""|\'\'\'(?:.|\n)*?\'\'\'|' \
-              r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'))'
-    return re.sub(pattern, repl, codigo)
+    def envolver_expressao(match):
+        indent, expressao, comentario = match.groups()
+        comentario = comentario or ""
+        expressao = expressao.rstrip()
+        for token in re.findall(r'__STR_\d+__', expressao):
+            string = TOKENS_STR[token]
+            if '{' in string and '}' in string and not re.match(r'(?i)(?:f|fr|rf)[\'"]', string):
+                TOKENS_STR[token] = 'f' + string
+        return f"{indent}print({expressao}){comentario}"
 
-# ── pipeline principal ──────────────────────────────────────────────────────
+    return re.sub(
+        r'(?m)^([ \t]*)print[ \t]+(?!\()(.*?)([ \t]+__COM_\d+__)?$',
+        envolver_expressao,
+        codigo,
+    )
+
+
 def converter(codigo_yl: str) -> str:
     _reset_tokens()
     codigo = proteger(codigo_yl)
-    codigo = substituir_operadores_compostos(codigo)
-    codigo = traduzir_tokens_simples(codigo)
+    codigo = traduzir_termos(codigo)
     codigo = corrigir_comparacoes(codigo)
-    codigo = restaurar_operadores_compostos(codigo)
     codigo = tratar_interpolacao(codigo)
-    
-    # --- VALIDAÇÃO AQUI: com strings protegidas! ---
-    validar_codigo(codigo)  # Escopos, await, return, identificadores, literais
 
+    # VALIDAÇÃO com strings e comentários protegidos
+    validar_codigo(codigo)
+
+    # restauração final de strings e comentários
     codigo = restaurar(codigo)
+    compile(codigo, "<yuukolane>", "exec")
     return codigo
 
 # ── I/O de arquivo (.yl → .py) ──────────────────────────────────────────────
