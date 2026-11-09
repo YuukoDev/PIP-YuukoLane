@@ -1,7 +1,9 @@
 # yuukolane_transpiler.py
+import keyword
 import os
 import re, json, sys, io, tokenize, uuid
 from pathlib import Path
+from ._contexto import analisar_identificadores
 from .validador import validar_codigo
 
 # Caminho absoluto do dicionario.json relativo a este arquivo:
@@ -87,29 +89,13 @@ def traduzir_termos(codigo: str, preservar_identificadores=False) -> str:
                 compostos[partes] = traducao
     frases = sorted(compostos, key=lambda partes: (len(partes), sum(map(len, partes))), reverse=True)
 
-    protegidos = set()
-    if preservar_identificadores:
-        # Protect declared names and assignment targets across the source.
-        for i, t in enumerate(tokens):
-            if t.type != tokenize.NAME:
-                continue
-            anterior = tokens[i - 1].string if i else ""
-            proximo = tokens[i + 1].string if i + 1 < len(tokens) else ""
-            if anterior in ("def", "class", "definir", "funcao", "classe", "as"):
-                protegidos.add(t.string)
-            if proximo == "=" and (anterior in ("", "(", ",") or t.start[1] == 0):
-                protegidos.add(t.string)
-            # Attribute names (obj.adicionar) are user/API-defined, not keywords.
-            if anterior == ".":
-                protegidos.add(t.string)
-            # Parameter declarations are followed by ':' or '=' inside
-            # the function signature. Never protect type annotations or
-            # return annotations merely because a 'def' occurred nearby.
-            if proximo in (":", "=") and anterior in ("(", ","):
-                protegidos.add(t.string)
+    aliases = set(DIC["funcoes_comuns"]) | set(DIC["tipos"])
+    literais, escopos = (analisar_identificadores(tokens)
+                        if preservar_identificadores else (set(), {}))
 
     substituicoes = []
     indice_nome = 0
+    traducoes = {}
     while indice_nome < len(nomes):
         token_indice, token, inicio, fim = nomes[indice_nome]
         encontrado = False
@@ -119,7 +105,7 @@ def traduzir_termos(codigo: str, preservar_identificadores=False) -> str:
             grupo = nomes[indice_nome:indice_nome + len(partes)]
             if tuple(item[1].string for item in grupo) != partes:
                 continue
-            if preservar_identificadores and any(item[1].string in protegidos for item in grupo):
+            if preservar_identificadores and any(item[0] in literais for item in grupo):
                 continue
             if any(
                 not re.fullmatch(r"[ \t]+", codigo[grupo[pos][3]:grupo[pos + 1][2]])
@@ -127,17 +113,35 @@ def traduzir_termos(codigo: str, preservar_identificadores=False) -> str:
             ):
                 continue
             substituicoes.append((grupo[0][2], grupo[-1][3], compostos[partes]))
+            traducoes[grupo[-1][0]] = compostos[partes]
             indice_nome += len(partes)
             encontrado = True
             break
         if encontrado:
             continue
 
-        traducao = token.string if token.string in protegidos else simples.get(token.string)
-        if token.string == "somar" and token.string not in protegidos:
-            proximo = tokens[token_indice + 1] if token_indice + 1 < len(tokens) else None
-            traducao = "sum" if proximo and proximo.type == tokenize.OP and proximo.string == "(" else "+"
-        if traducao is not None and traducao != token.string:
+        termo = token.string
+        escopo = escopos.get(token_indice)
+        anterior = tokens[token_indice - 1] if token_indice else None
+        anterior_traduzido = traducoes.get(token_indice - 1, anterior.string if anterior else "")
+        proximo = tokens[token_indice + 1] if token_indice + 1 < len(tokens) else None
+        infixo = anterior and (
+            anterior_traduzido in (")", "]", "}", "True", "False", "None")
+            or anterior.type in (tokenize.NUMBER, tokenize.STRING)
+            or (anterior.type == tokenize.NAME and anterior_traduzido.isidentifier()
+                and anterior_traduzido not in ("print", "if", "elif", "while")
+                and not keyword.iskeyword(anterior_traduzido))
+        )
+        sombreado = escopo and escopo.vincula(termo) and (
+            termo in aliases or (termo in DIC["operadores"] and not infixo)
+        )
+        traducao = termo
+        if token_indice not in literais and not (sombreado and (termo != "somar" or not infixo)):
+            traducao = simples.get(termo, termo)
+            if termo == "somar":
+                traducao = "sum" if proximo and proximo.string == "(" and not infixo else "+"
+        traducoes[token_indice] = traducao
+        if traducao != termo:
             substituicoes.append((inicio, fim, traducao))
         indice_nome += 1
 

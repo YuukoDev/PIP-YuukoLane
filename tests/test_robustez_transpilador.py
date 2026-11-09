@@ -44,6 +44,68 @@ class RobustezTranspiladorTests(unittest.TestCase):
     def test_interpolacao_nome_simples_continua_funcionando(self):
         self.assertEqual(converter('mostrar "Olá {nome}"\n'), 'print(f"Olá {nome}")\n')
 
+    def test_atributo_nao_desativa_alias_no_mesmo_arquivo(self):
+        codigo = "obj.tipo()\nresultado = tipo(42)\n"
+        self.assertEqual(converter(codigo), "obj.tipo()\nresultado = type(42)\n")
+
+    def test_metodos_documentados_de_lista_e_metodos_proprios(self):
+        codigo = """classe Colecao:
+    definir adicionar(self, valor):
+        retornar valor
+nomes = ["Ivo"]
+nomes.adicionar("Ana")
+nomes.ordenar()
+propria = Colecao()
+resultado = propria.adicionar(3)
+"""
+        contexto = {}
+        exec(converter(codigo), contexto)
+        self.assertEqual(contexto["nomes"], ["Ana", "Ivo"])
+        self.assertEqual(contexto["resultado"], 3)
+
+    def test_parametros_e_argumentos_nomeados_preservam_somente_seu_contexto(self):
+        codigo = """definir externa(
+    tamanho: inteiro = tamanho([]),
+    /,
+    *lista,
+    texto: texto = "ok",
+    **copiar,
+):
+    definir interna():
+        retornar tamanho, lista, texto, copiar
+    retornar interna()
+resultado = externa(2, 3, texto="sim", copiar=4)
+global_len = tamanho([1])
+"""
+        python = converter(codigo)
+        self.assertIn("texto: str", python)
+        contexto = {}
+        exec(python, contexto)
+        self.assertEqual(contexto["resultado"], (2, (3,), "sim", {"copiar": 4}))
+        self.assertEqual(contexto["global_len"], 1)
+
+    def test_importacao_preserva_nome_e_alias(self):
+        codigo = "from modulo import ordenar as copiar\nresultado = copiar()\n"
+        self.assertEqual(converter(codigo), codigo)
+
+    def test_metodo_nao_herda_nomes_do_escopo_da_classe(self):
+        codigo = """classe Colecao:
+    definir tamanho(self):
+        retornar 0
+    definir contar(self):
+        retornar tamanho([1, 2])
+resultado = Colecao().contar()
+"""
+        contexto = {}
+        exec(converter(codigo), contexto)
+        self.assertEqual(contexto["resultado"], 2)
+
+    def test_somar_antes_de_parenteses_distingue_operador_e_funcao(self):
+        codigo = "a = 1 somar (2 somar 3)\nb = somar([a, 4])\n"
+        contexto = {}
+        exec(converter(codigo), contexto)
+        self.assertEqual((contexto["a"], contexto["b"]), (6, 10))
+
     def test_conversoes_concorrentes_nao_misturam_strings(self):
         codigos = ['mostrar "texto %d"\n' % n for n in range(80)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
