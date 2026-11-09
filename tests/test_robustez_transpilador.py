@@ -23,6 +23,16 @@ class RobustezTranspiladorTests(unittest.TestCase):
         codigo = 'se verificar(valor=1):\n    vazio\n'
         self.assertIn('if verificar(valor=1):', converter(codigo))
 
+    def test_nome_de_funcao_definida_nao_e_traduzido(self):
+        codigo = 'definir adicionar(valor):\n    retornar valor\nmostrar adicionar(2)\n'
+        resultado = converter(codigo)
+        self.assertIn('def adicionar(valor):', resultado)
+        self.assertIn('print(adicionar(2))', resultado)
+
+    def test_nome_de_classe_definida_nao_e_traduzido(self):
+        codigo = 'classe ordenar:\n    vazio\n'
+        self.assertIn('class ordenar:', converter(codigo))
+
     def test_conversoes_concorrentes_nao_misturam_strings(self):
         codigos = ['mostrar "texto %d"\n' % n for n in range(80)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
