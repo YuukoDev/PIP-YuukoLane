@@ -119,7 +119,7 @@ def traduzir_termos(codigo: str, preservar_identificadores=False) -> str:
     frases = sorted(compostos, key=lambda partes: (len(partes), sum(map(len, partes))), reverse=True)
 
     aliases = set(DIC["funcoes_comuns"]) | set(DIC["tipos"])
-    literais, escopos = (analisar_identificadores(tokens)
+    literais, escopos = (analisar_identificadores(tokens, aliases)
                         if preservar_identificadores else (set(), {}))
 
     substituicoes = []
@@ -183,13 +183,16 @@ def corrigir_comparacoes(codigo: str) -> str:
     edicoes = []
     inicio_instrucao = True
     condicional = False
-    profundidade = 0
+    grupos = []
+    anterior = None
     for token in _tokens(codigo):
         if token.type in (tokenize.INDENT, tokenize.DEDENT, tokenize.NL, tokenize.COMMENT):
             continue
         if token.type == tokenize.NEWLINE:
             inicio_instrucao = True
             condicional = False
+            grupos.clear()
+            anterior = None
             continue
         termo = token.string
         if inicio_instrucao:
@@ -197,15 +200,26 @@ def corrigir_comparacoes(codigo: str) -> str:
             inicio_instrucao = False
         if not condicional:
             continue
+        ativo = not grupos or grupos[-1]
         if termo in ("(", "[", "{"):
-            profundidade += 1
+            apos_operando = anterior and (
+                anterior.type in (tokenize.STRING, tokenize.NUMBER)
+                or anterior.string in (")", "]", "}", "True", "False", "None")
+                or (anterior.type == tokenize.NAME and not keyword.iskeyword(anterior.string))
+            )
+            grupos.append(ativo and termo == "(" and not apos_operando)
         elif termo in (")", "]", "}"):
-            profundidade -= 1
-        elif profundidade == 0:
-            if termo in (":", "lambda"):
+            grupos.pop()
+        elif ativo and termo == "lambda":
+            if grupos:
+                grupos[-1] = False
+            else:
                 condicional = False
-            elif termo == "=":
-                edicoes.append((offset(token.start), offset(token.end), "=="))
+        elif ativo and termo == ":" and not grupos:
+            condicional = False
+        elif ativo and termo == "=":
+            edicoes.append((offset(token.start), offset(token.end), "=="))
+        anterior = token
     return _substituir(codigo, edicoes)
 
 
