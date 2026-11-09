@@ -1,5 +1,6 @@
 """Contexto lexical para nomes que também aparecem no dicionário."""
 
+import ast
 import tokenize
 
 
@@ -59,7 +60,46 @@ def _cabecalho(partes, tokens):
     return None
 
 
-def analisar_identificadores(tokens):
+def _nomes_alvo(indices, tokens):
+    """Find only names bound by an assignment target, excluding attribute/index loads."""
+    colunas = {}
+    coluna = 0
+    partes = []
+    for indice in indices:
+        termo = tokens[indice].string
+        colunas[coluna] = indice
+        coluna += len(termo.encode("utf-8")) + 1
+        partes.append(termo)
+    try:
+        alvo = ast.parse(" ".join(partes) + " = None").body[0].targets[0]
+    except (SyntaxError, IndexError, AttributeError):
+        return []
+    return [
+        colunas[no.col_offset]
+        for no in ast.walk(alvo)
+        if isinstance(no, ast.Name) and isinstance(no.ctx, ast.Store)
+    ]
+
+
+def _grupos(indices, tokens):
+    """Collect the direct children of each bracket pair and the statement root."""
+    pilha = [[]]
+    grupos = []
+    for indice in indices:
+        termo = tokens[indice].string
+        if termo in _ABRE:
+            pilha[-1].append(indice)
+            pilha.append([indice])
+        elif termo in _FECHA and len(pilha) > 1:
+            grupo = pilha.pop()
+            grupos.append((grupo, indice))
+            pilha[-1].append(indice)
+        else:
+            pilha[-1].append(indice)
+    return pilha[0], reversed(grupos)
+
+
+def analisar_identificadores(tokens, aliases):
     """Retorna posições literais e escopos das referências em cada instrução."""
     raiz = _Escopo()
     blocos = [raiz]
@@ -67,6 +107,62 @@ def analisar_identificadores(tokens):
     literais = set()
     pendente = None
     partes = []
+
+    def vincular(alvo, escopo):
+        for indice in _nomes_alvo(alvo, tokens):
+            termo = tokens[indice].string
+            if termo in aliases:
+                literais.add(indice)
+                escopo.nomes.add(termo)
+
+    def alvos(indices, termos, escopo, completos):
+        def trecho(inicio, fim):
+            return [i for i in completos if inicio <= i < fim]
+        inicio = 1 if termos[0] == "async" else 0
+        if termos[inicio:inicio + 1] in (["for"], ["para"]):
+            for pos in range(inicio + 1, len(termos)):
+                if termos[pos] in {"in", "em"}:
+                    vincular(trecho(indices[inicio] + 1, indices[pos]), escopo)
+                    break
+        elif termos[0] not in _DECLARACOES and termos[0] not in {
+            "if", "se", "elif", "senao", "while", "enquanto", "async", "lambda",
+        }:
+            inicio = 0
+            for pos, termo in enumerate(termos):
+                if termo in {":", ";"}:
+                    break
+                if termo in {"=", "atribuir"}:
+                    alvo = trecho(indices[inicio], indices[pos]) if inicio < pos else []
+                    if len(alvo) > 1:
+                        vincular(alvo, escopo)
+                    inicio = pos + 1
+
+    def compreensao(diretos, fim, completos):
+        termos = [tokens[i].string for i in diretos]
+        clausulas = [p for p, termo in enumerate(termos) if termo in {"for", "para"}]
+        if not clausulas:
+            return
+        externos = escopos[diretos[0]]
+        local = _Escopo(externos.pai if externos.classe else externos)
+        intervalos = []
+        for pos, limite in zip(clausulas, clausulas[1:] + [len(termos)]):
+            separador = next((i for i in range(pos + 1, limite)
+                              if termos[i] in {"in", "em"}), None)
+            if separador is None or separador + 1 == limite:
+                return
+            intervalos.append((pos, separador, limite))
+        pos, separador, limite = intervalos[0]
+        filtro = next((i for i in range(separador + 1, limite)
+                       if termos[i] in {"if", "se"}), limite)
+        if filtro == limite and limite < len(termos) and termos[limite - 1] == "async":
+            filtro -= 1
+        inicio_iteravel = diretos[separador] + 1
+        fim_iteravel = diretos[filtro] if filtro < len(diretos) else fim
+        for indice in range(diretos[0] + 1, fim):
+            if indice in escopos and not inicio_iteravel <= indice < fim_iteravel:
+                escopos[indice] = local
+        for pos, separador, _ in intervalos:
+            vincular([i for i in completos if diretos[pos] < i < diretos[separador]], local)
 
     def instrucao(indices, escopo):
         if not indices:
@@ -95,6 +191,20 @@ def analisar_identificadores(tokens):
                 profundidade += 1
             elif termo in _FECHA:
                 profundidade -= 1
+
+        raiz_instrucao, grupos = _grupos(indices, tokens)
+        inicio = 0
+        for pos, indice in enumerate(raiz_instrucao):
+            if tokens[indice].string == ";":
+                trecho = raiz_instrucao[inicio:pos]
+                if trecho:
+                    alvos(trecho, [tokens[i].string for i in trecho], escopo, indices)
+                inicio = pos + 1
+        trecho = raiz_instrucao[inicio:]
+        if trecho:
+            alvos(trecho, [tokens[i].string for i in trecho], escopo, indices)
+        for diretos, fim in grupos:
+            compreensao(diretos, fim, indices)
 
         if importacao:
             inicio = termos.index("import") + 1 if "import" in termos else len(termos)

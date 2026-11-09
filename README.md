@@ -31,7 +31,7 @@ yuuko ola.yl --so-transpilar
 
 ## Documentação
 
-A referência de sintaxe, comandos da CLI, validação, módulos e limites conhecidos está em [docs/](docs/README.md). O estado do desenvolvimento, bugs conhecidos e próximos passos ficam em [devlog/](devlog/README.md).
+Comece pelo [guia passo a passo](docs/visao-geral.md). Use a [referência de sintaxe](docs/sintaxe.md) para consultar operadores, palavras-chave e exemplos. O [índice da documentação](docs/README.md) reúne os demais guias. O estado do desenvolvimento, bugs conhecidos e próximos passos ficam em [devlog/](devlog/README.md).
 
 Há também um [backend CRUD de exemplo com FastAPI e SQLite](examples/backend_basico/README.md).
 

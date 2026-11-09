@@ -31,7 +31,7 @@ para item em intervalo(3):
 | `parar` | `break` |
 | `vazio` | `pass` |
 
-Nos cabeçalhos `se`, `senao se` e `enquanto`, um `=` simples é convertido em `==`. Prefira escrever `igual` para comparação.
+Nos cabeçalhos `se`, `senao se` e `enquanto`, um `=` simples é convertido em `==`, inclusive entre parênteses de agrupamento. Argumentos nomeados, como em `se verificar(valor=1):`, mantêm o `=`. Prefira escrever `igual` para comparação.
 
 ## Funções e retorno
 
@@ -112,3 +112,13 @@ Em `mostrar expressão`, strings sem prefixo que contêm campos válidos são co
 ## Identificadores
 
 Use nomes que não sejam palavras reservadas em atribuições. Nomes de funções, classes e parâmetros são preservados nas declarações. Quando um desses nomes coincide com um alias de função ou tipo, suas referências no escopo correspondente preservam a grafia original. A análise lexical não cobre todos os casos de vinculação do Python.
+
+
+## Laços, desempacotamento e compreensões
+
+```text
+nomes = [nome para nome, quantidade em [("Ana", 2), ("Ivo", 1)] se quantidade maior 1]
+primeiro, segundo = ("Ana", "Ivo")
+```
+
+Alvos de laços e de desempacotamento preservam nomes que coincidem com aliases de funções ou tipos. Compreensões criam um escopo próprio. Por exemplo, em `[lista para lista em lista((1, 2))]`, o primeiro iterável usa o alias `lista(...)` do escopo externo, e o resultado usa a variável local `lista`.
