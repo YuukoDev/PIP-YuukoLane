@@ -1,10 +1,21 @@
-# Visão geral
+# Primeiros passos com YuukoLane
 
-YuukoLane permite escrever comandos e expressões do Python usando palavras em português. É uma camada transpilada de sintaxe, não um runtime independente: o transpilador lê um arquivo `.yl`, localiza termos do dicionário e entrega código Python para o interpretador executar.
+Você escreve um arquivo `.yl` em português, e o comando `yuuko` traduz e executa o código no Python. A indentação e as APIs de bibliotecas seguem as regras do Python.
 
-## Primeiro programa
+## 1. Instale a CLI
 
-Crie `ola.yl`:
+Em um ambiente com Python, execute:
+
+```bash
+python -m pip install yuukolane
+yuuko --help
+```
+
+Para testar a versão deste repositório, rode `python -m pip install .` na raiz do checkout.
+
+## 2. Escreva seu primeiro programa
+
+Crie `ola.yl` com o seguinte conteúdo:
 
 ```text
 definir saudacao(nome):
@@ -13,34 +24,51 @@ definir saudacao(nome):
 saudacao("Yuuko")
 ```
 
-Execute:
-
 ```bash
 yuuko ola.yl
 ```
 
-O trecho é convertido para Python equivalente a:
+A saída é `Olá, Yuuko!`. Use quatro espaços para os comandos dentro da função. Em `mostrar`, o campo `{nome}` recebe o valor do parâmetro.
 
-```python
-def saudacao(nome):
-    print(f"Olá, {nome}!")
+## 3. Use listas, laços e condições
 
-saudacao("Yuuko")
+Salve este exemplo como `pedidos.yl`:
+
+```text
+definir pedidos_validos(pedidos):
+    validos = lista vazia
+    para nome, quantidade em pedidos:
+        se quantidade maior ou igual 2:
+            validos.adicionar(nome)
+    retornar validos
+
+pedidos = [("Ana", 2), ("Ivo", 1)]
+validos = pedidos_validos(pedidos)
+mostrar "Pedidos válidos: {validos}"
 ```
 
-## Modelo mental
+O programa imprime `Pedidos válidos: ['Ana']`. O laço desempacota cada par em `nome` e `quantidade`. A condição filtra os pedidos e `.adicionar()` usa o método `.append()` da lista.
 
-- Indentação, expressões, funções, classes, coleções e chamadas seguem a base de Python.
-- Palavras localizadas estão listadas em [sintaxe](sintaxe.md) e [biblioteca](biblioteca.md).
-- Imports locais `.yl` são convertidos para Python antes do carregamento.
-- Não há runtime independente: APIs e pacotes Python são a base de interoperabilidade.
-- A meta inicial é permitir aplicações comuns, como backends web, usando frameworks Python existentes.
-- Bibliotecas próprias podem ser acrescentadas depois, sem substituir a interoperabilidade com Python.
+## 4. Use uma biblioteca Python
 
-## Compatibilidade
+O comando `import` e os métodos de bibliotecas mantêm a grafia da API Python:
 
-O pacote declara Python 3.8 ou superior. Os testes de desenvolvimento usam `unittest`, sem adicionar dependências de teste ao pacote.
+```text
+import json
 
-## Limites
+dados = {"nome": "Ana", "quantidade": 2}
+mostrar json.dumps(dados)
+```
 
-YuukoLane está em evolução. A tradução dos nomes usa tokens Python; algumas transformações específicas ainda usam regex e nem todos os recursos do Python foram auditados. Consulte [arquitetura e limites](arquitetura.md) e o [devlog](../devlog/README.md) antes de depender de construções menos comuns.
+Para separar um programa em arquivos, veja [módulos e imports](modulos.md). Para um exemplo maior, veja o [backend com FastAPI e SQLite](backend.md).
+
+## 5. Valide e veja o Python gerado
+
+```bash
+yuuko pedidos.yl --checar
+yuuko pedidos.yl --so-transpilar
+```
+
+`--checar` aponta erros sem executar o programa. `--so-transpilar` imprime o Python gerado, o que ajuda a entender a tradução de um trecho.
+
+Consulte a [referência de sintaxe](sintaxe.md) para operadores, funções, exceções e assincronismo. A [página de validação](validacao.md) explica os códigos de erro da linguagem. O CI testa o pacote do Python 3.8 ao 3.14.
