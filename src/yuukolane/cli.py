@@ -17,7 +17,7 @@ def carregar_modulos_yl_em_memoria(arquivo_principal: Path, debug=False, salvar_
     if arquivo_principal.suffix != ".yl":
         return codigo_main
 
-    codigo_main = converter(codigo_main)
+    codigo_main = converter(codigo_main, filename=str(arquivo_principal))
     arquivos_modulos = {}
     imports_principais = set()
 
@@ -76,7 +76,7 @@ def carregar_modulos_yl_em_memoria(arquivo_principal: Path, debug=False, salvar_
             pacote_modulo = nome.rpartition(".")[0]
 
         if origem.suffix == ".yl":
-            codigo = converter(origem.read_text(encoding="utf-8"))
+            codigo = converter(origem.read_text(encoding="utf-8"), filename=str(origem))
         else:
             codigo = origem.read_text(encoding="utf-8")
         arquivos_modulos[nome_real] = (origem, codigo)
@@ -169,7 +169,7 @@ def main():
     try:
         if args.checar:
             codigo_yl = caminho.read_text(encoding="utf-8")
-            codigo_py = converter(codigo_yl)
+            codigo_py = converter(codigo_yl, filename=str(caminho))
             validar_codigo(codigo_py)
             print("[OK] Código válido. Nenhum erro encontrado.")
             return
