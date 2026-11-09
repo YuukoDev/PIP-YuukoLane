@@ -106,6 +106,48 @@ resultado = Colecao().contar()
         exec(converter(codigo), contexto)
         self.assertEqual((contexto["a"], contexto["b"]), (6, 10))
 
+    def test_interpolacao_preserva_formatos_expressoes_e_chaves_escapadas(self):
+        codigo = """valor = 3
+mostrar "{{total}} {valor + 1:03d}"
+"""
+        self.assertIn('print(f"{{total}} {valor + 1:03d}")', converter(codigo))
+
+    def test_interpolacao_preserva_json_e_prefixos_explicitos(self):
+        codigo = """mostrar '{"id": 1}'
+mostrar r"{nome}"
+mostrar f"{obj.ordenar()}" # palavra reservar
+"""
+        self.assertEqual(
+            converter(codigo),
+            """print('{"id": 1}')
+print(r"{nome}")
+print(f"{obj.ordenar()}") # palavra reservar
+""",
+        )
+
+    def test_interpolacao_em_string_multilinha_preserva_as_linhas(self):
+        codigo = 'mostrar """Olá\n{nome}""" # fim\nmostrar 42\n'
+        self.assertEqual(converter(codigo), 'print(f"""Olá\n{nome}""") # fim\nprint(42)\n')
+
+    def test_condicional_multilinha_preserva_keyword_argument(self):
+        codigo = "se verificar(\n    valor=1,\n) = verdadeiro:\n    vazio\n"
+        self.assertEqual(converter(codigo), "if verificar(\n    valor=1,\n) == True:\n    pass\n")
+
+    def test_diagnostico_mantem_linha_original_apos_string_multilinha(self):
+        codigo = 'texto_longo = """x\ny"""\nretornar 1\n'
+        with self.assertRaisesRegex(SyntaxError, "YK201") as erro:
+            converter(codigo, filename="principal.yl")
+        self.assertEqual(erro.exception.filename, "principal.yl")
+        self.assertEqual(erro.exception.lineno, 3)
+        self.assertEqual(erro.exception.text, "retornar 1\n")
+
+    def test_diagnostico_inclui_arquivo_em_falha_de_tokenizacao(self):
+        with self.assertRaises(SyntaxError) as erro:
+            converter("mostrar (42\n", filename="quebrado.yl")
+        self.assertEqual(erro.exception.filename, "quebrado.yl")
+        self.assertEqual(erro.exception.lineno, 1)
+        self.assertEqual(erro.exception.text, "mostrar (42\n")
+
     def test_conversoes_concorrentes_nao_misturam_strings(self):
         codigos = ['mostrar "texto %d"\n' % n for n in range(80)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:

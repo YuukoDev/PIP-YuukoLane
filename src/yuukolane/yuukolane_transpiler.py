@@ -1,7 +1,13 @@
 # yuukolane_transpiler.py
+import ast
 import keyword
 import os
-import re, json, sys, io, tokenize, uuid
+import io
+import json
+import re
+import sys
+import tokenize
+import uuid
 from pathlib import Path
 from ._contexto import analisar_identificadores
 from .validador import validar_codigo
@@ -20,38 +26,68 @@ def _new_state(source):
         prefix = "__YK_" + uuid.uuid4().hex + "_"
     return {"strings": {}, "comments": {}, "prefix": prefix}
 
-# ── proteção de strings & comentários ──────────────────────────────────────
-def proteger(codigo: str, state=None) -> str:
-    """Replace Python string and comment tokens with placeholders before translation."""
-    if state is None:
-        state = _new_state(codigo)
-    linhas = codigo.splitlines(keepends=True)
-    deslocamentos = [0]
-    for linha in linhas:
-        deslocamentos.append(deslocamentos[-1] + len(linha))
+def _offsets(codigo):
+    inicios = [0]
+    for linha in codigo.split("\n"):
+        inicios.append(inicios[-1] + len(linha) + 1)
 
     def offset(posicao):
         linha, coluna = posicao
-        return deslocamentos[min(linha - 1, len(deslocamentos) - 1)] + coluna
+        return inicios[min(linha - 1, len(inicios) - 1)] + coluna
 
-    try:
-        tokens = tokenize.generate_tokens(io.StringIO(codigo).readline)
-        substituicoes = []
-        for token in tokens:
-            if token.type == tokenize.STRING:
-                marcador = f"{state['prefix']}STR_{len(state['strings'])}__"
-                state['strings'][marcador] = token.string
-                substituicoes.append((offset(token.start), offset(token.end), marcador))
-            elif token.type == tokenize.COMMENT:
-                marcador = f"{state['prefix']}COM_{len(state['comments'])}__"
-                state['comments'][marcador] = token.string
-                substituicoes.append((offset(token.start), offset(token.end), marcador))
-    except tokenize.TokenError as erro:
-        raise SyntaxError(str(erro)) from erro
+    return offset
 
-    for inicio, fim, marcador in reversed(substituicoes):
-        codigo = codigo[:inicio] + marcador + codigo[fim:]
+
+def _substituir(codigo, edicoes):
+    for inicio, fim, texto in reversed(edicoes):
+        codigo = codigo[:inicio] + texto + codigo[fim:]
     return codigo
+
+
+def _tokens(codigo):
+    return tokenize.generate_tokens(io.StringIO(codigo).readline)
+
+
+def proteger(codigo: str, state=None) -> str:
+    """Replace strings and comments while preserving physical line numbers."""
+    if state is None:
+        state = _new_state(codigo)
+    offset = _offsets(codigo)
+    edicoes = []
+    string_aberta = None
+    profundidade = 0
+    for token in _tokens(codigo):
+        tipo = tokenize.tok_name[token.type]
+        if tipo in {"FSTRING_START", "TSTRING_START"}:
+            if profundidade == 0:
+                string_aberta = token.start
+            profundidade += 1
+            continue
+        if tipo in {"FSTRING_END", "TSTRING_END"}:
+            profundidade -= 1
+            if profundidade:
+                continue
+            inicio = offset(string_aberta)
+        elif profundidade:
+            continue
+        elif token.type in (tokenize.STRING, tokenize.COMMENT):
+            inicio = offset(token.start)
+        else:
+            continue
+
+        fim = offset(token.end)
+        original = codigo[inicio:fim]
+        if token.type == tokenize.COMMENT:
+            grupo, rotulo = state["comments"], "COM"
+            marcador = f"# {state['prefix']}{rotulo}_{len(grupo)}__"
+        else:
+            grupo, rotulo = state["strings"], "STR"
+            marcador = f"{state['prefix']}{rotulo}_{len(grupo)}__"
+            if "\n" in original:
+                marcador = '"""' + marcador + '\n' * original.count("\n") + '"""'
+        grupo[marcador] = original
+        edicoes.append((inicio, fim, marcador))
+    return _substituir(codigo, edicoes)
 
 def restaurar(codigo: str, state) -> str:
     for tok, txt in {**state["comments"], **state["strings"]}.items():
@@ -60,16 +96,8 @@ def restaurar(codigo: str, state) -> str:
 
 # ── tradução lexical dos termos da linguagem ────────────────────────────────
 def traduzir_termos(codigo: str, preservar_identificadores=False) -> str:
-    linhas = codigo.splitlines(keepends=True)
-    deslocamentos = [0]
-    for linha in linhas:
-        deslocamentos.append(deslocamentos[-1] + len(linha))
-
-    def offset(posicao):
-        linha, coluna = posicao
-        return deslocamentos[min(linha - 1, len(deslocamentos) - 1)] + coluna
-
-    tokens = list(tokenize.generate_tokens(io.StringIO(codigo).readline))
+    offset = _offsets(codigo)
+    tokens = list(_tokens(codigo))
     nomes = [
         (indice, token, offset(token.start), offset(token.end))
         for indice, token in enumerate(tokens)
@@ -145,74 +173,110 @@ def traduzir_termos(codigo: str, preservar_identificadores=False) -> str:
             substituicoes.append((inicio, fim, traducao))
         indice_nome += 1
 
-    for inicio, fim, traducao in reversed(substituicoes):
-        codigo = codigo[:inicio] + traducao + codigo[fim:]
-    return codigo
+    return _substituir(codigo, substituicoes)
 
 
-# ── Conditional comparison sugar; preserve nested keyword arguments ──
 def corrigir_comparacoes(codigo: str) -> str:
-    linhas = codigo.splitlines(keepends=True)
-    saida = []
-    for linha in linhas:
-        try:
-            toks = list(tokenize.generate_tokens(io.StringIO(linha).readline))
-        except (tokenize.TokenError, IndentationError):
-            saida.append(linha)
+    """Translate equality sugar in conditional headers, across physical lines."""
+    offset = _offsets(codigo)
+    edicoes = []
+    inicio_instrucao = True
+    condicional = False
+    profundidade = 0
+    for token in _tokens(codigo):
+        if token.type in (tokenize.INDENT, tokenize.DEDENT, tokenize.NL, tokenize.COMMENT):
             continue
-        nomes = [t for t in toks if t.type not in (tokenize.INDENT, tokenize.DEDENT, tokenize.NL, tokenize.NEWLINE, tokenize.ENDMARKER)]
-        if not nomes or nomes[0].string not in ("if", "elif", "while"):
-            saida.append(linha)
+        if token.type == tokenize.NEWLINE:
+            inicio_instrucao = True
+            condicional = False
             continue
-        profundidade = 0
-        posicoes = []
-        for t in nomes[1:]:
-            if t.string in ("(", "[", "{"):
-                profundidade += 1
-            elif t.string in (")", "]", "}"):
-                profundidade -= 1
-            elif t.string == ":" and profundidade == 0:
-                break
-            elif t.string == "=" and profundidade == 0:
-                posicoes.append(t.start[1])
-        for pos in reversed(posicoes):
-            linha = linha[:pos] + "==" + linha[pos+1:]
-        saida.append(linha)
-    return "".join(saida)
+        termo = token.string
+        if inicio_instrucao:
+            condicional = termo in ("if", "elif", "while")
+            inicio_instrucao = False
+        if not condicional:
+            continue
+        if termo in ("(", "[", "{"):
+            profundidade += 1
+        elif termo in (")", "]", "}"):
+            profundidade -= 1
+        elif profundidade == 0:
+            if termo in (":", "lambda"):
+                condicional = False
+            elif termo == "=":
+                edicoes.append((offset(token.start), offset(token.end), "=="))
+    return _substituir(codigo, edicoes)
 
-# ── saída de texto e interpolação ───────────────────────────────────────────
+
+def _interpolar(literal):
+    if not literal.startswith(("'", '"')) or "{" not in literal:
+        return literal
+    candidato = "f" + literal
+    try:
+        arvore = ast.parse(candidato, mode="eval").body
+    except SyntaxError:
+        return literal
+    campos = [parte for parte in arvore.values if isinstance(parte, ast.FormattedValue)]
+    # Quoted JSON keys followed by a colon resemble f-string format fields.
+    if campos and all(not (isinstance(campo.value, ast.Constant)
+                           and isinstance(campo.value.value, str)
+                           and campo.format_spec is not None) for campo in campos):
+        return candidato
+    return literal
+
+
 def tratar_interpolacao(codigo: str, state) -> str:
-    def envolver_expressao(match):
-        indent, expressao, comentario = match.groups()
-        comentario = comentario or ""
-        expressao = expressao.rstrip()
-        for token in state['strings']:
-            if token not in expressao:
-                continue
-            string = state['strings'][token]
-            if ('{' in string and '}' in string and
-                    not re.match(r'(?i)(?:f|fr|rf|r|b|u|br|rb)[\'"]', string) and
-                    re.search(r'(?<!\{)\{[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*\}', string)):
-                state['strings'][token] = 'f' + string
-        return f"{indent}print({expressao}){comentario}"
-
-    return re.sub(
-        r'(?m)^([ \t]*)print[ \t]+(?!\()(.*?)([ \t]+__YK_[a-f0-9]+_COM_\d+__)?$',
-        envolver_expressao,
-        codigo,
-    )
+    """Wrap shorthand print statements without touching normal Python calls."""
+    offset = _offsets(codigo)
+    edicoes = []
+    instrucao = []
+    for token in _tokens(codigo):
+        if token.type in (tokenize.INDENT, tokenize.DEDENT, tokenize.NL, tokenize.COMMENT):
+            continue
+        if token.type not in (tokenize.NEWLINE, tokenize.ENDMARKER):
+            instrucao.append(token)
+            continue
+        if len(instrucao) > 1 and instrucao[0].string == "print":
+            primeiro, argumento = instrucao[:2]
+            inicio, fim = offset(primeiro.end), offset(argumento.start)
+            if codigo[inicio:fim].strip() == "" and inicio < fim and argumento.string not in {
+                "(", "=", ":=", ":", ".", "+=", "-=", "*=", "/=", "//=", "**=", "%=",
+                "&=", "|=", "^=", "<<=", ">>=", "@=", ";",
+            }:
+                edicoes.append((inicio, fim, "("))
+                fim_argumento = offset(instrucao[-1].end)
+                edicoes.append((fim_argumento, fim_argumento, ")"))
+                for parte in instrucao[1:]:
+                    if parte.string in state["strings"]:
+                        state["strings"][parte.string] = _interpolar(state["strings"][parte.string])
+        instrucao = []
+    return _substituir(codigo, edicoes)
 
 
 def converter(codigo_yl: str, filename: str = "<yuukolane>") -> str:
     state = _new_state(codigo_yl)
-    codigo = proteger(codigo_yl, state)
-    codigo = traduzir_termos(codigo, preservar_identificadores=True)
-    codigo = corrigir_comparacoes(codigo)
-    codigo = tratar_interpolacao(codigo, state)
-
-    codigo = restaurar(codigo, state)
-    validar_codigo(codigo, filename, codigo_yl)
-    compile(codigo, filename, "exec")
+    linhas = io.StringIO(codigo_yl).readlines()
+    try:
+        codigo = proteger(codigo_yl, state)
+        codigo = traduzir_termos(codigo, preservar_identificadores=True)
+        codigo = corrigir_comparacoes(codigo)
+        codigo = tratar_interpolacao(codigo, state)
+        codigo = restaurar(codigo, state)
+        validar_codigo(codigo, filename, codigo_yl)
+        compile(codigo, filename, "exec")
+    except tokenize.TokenError as erro:
+        mensagem, (linha, coluna) = erro.args
+        if linha > len(linhas) and linhas:
+            linha, coluna = len(linhas), len(linhas[-1].rstrip("\r\n"))
+        texto = linhas[linha - 1] if 1 <= linha <= len(linhas) else None
+        raise SyntaxError(mensagem, (filename, linha, coluna + 1, texto)) from None
+    except SyntaxError as erro:
+        linha = erro.lineno
+        texto = linhas[linha - 1] if linha and 1 <= linha <= len(linhas) else None
+        # A generated column can point to the wrong place on the original line.
+        mesma_linha = texto and erro.text and erro.text.rstrip("\r\n") == texto.rstrip("\r\n")
+        coluna = erro.offset if mesma_linha else None
+        raise type(erro)(erro.msg, (filename, linha, coluna, texto)) from None
     return codigo
 
 # ── I/O de arquivo (.yl → .py) ──────────────────────────────────────────────

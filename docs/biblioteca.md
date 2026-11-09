@@ -63,4 +63,4 @@ nomes.ordenar()
 
 `classe` traduz para `class`; `global` permanece `global`; `nao local` traduz para `nonlocal`; `em` traduz para `in`; `del` e `lambda` permanecem iguais. `is` também permanece igual.
 
-O dicionário traduz nomes de forma textual; ele não localiza nomes de APIs ou módulos externos.
+Os aliases de métodos são reconhecidos em variáveis com uma única atribuição anterior a uma lista literal ou a `lista vazia`, no mesmo escopo. Atributos de outros objetos mantêm os nomes definidos pela API.

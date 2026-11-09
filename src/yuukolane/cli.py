@@ -4,11 +4,11 @@ import importlib
 import importlib.util
 import sys
 import tempfile
+import traceback
 import subprocess
 import os
 from pathlib import Path
 from .yuukolane_transpiler import converter
-from .validador import validar_codigo
 
 def carregar_modulos_yl_em_memoria(arquivo_principal: Path, debug=False, salvar_transpilados_em=None):
     """Transpile local imports, stage them as Python modules, and preload them."""
@@ -169,14 +169,13 @@ def main():
     try:
         if args.checar:
             codigo_yl = caminho.read_text(encoding="utf-8")
-            codigo_py = converter(codigo_yl, filename=str(caminho))
-            validar_codigo(codigo_py)
+            converter(codigo_yl, filename=str(caminho))
             print("[OK] Código válido. Nenhum erro encontrado.")
             return
 
         if args.so_transpilar:
             codigo_yl = caminho.read_text(encoding="utf-8")
-            codigo_py = converter(codigo_yl)
+            codigo_py = converter(codigo_yl, filename=str(caminho))
             sys.stdout.write(codigo_py)
             return
 
@@ -206,6 +205,10 @@ def main():
             else:
                 exec(codigo, globals())
 
+    except SyntaxError as erro:
+        mensagem = "".join(traceback.format_exception_only(type(erro), erro)).rstrip()
+        print(f"[ERRO] {mensagem}")
+        return 1
     except Exception as e:
         print(f"[ERRO] {e}")
         return 1
