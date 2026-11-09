@@ -149,6 +149,8 @@ def executar_em_subprocesso_via_tempdir(main_py_path: Path, tempdir: Path, proje
         print("🔴 STDERR:")
         print(result.stderr)
 
+    return result.returncode
+
 def main():
     parser = argparse.ArgumentParser(description="Transpila e executa código YuukoLane (.yl)")
     parser.add_argument("arquivo", help="Caminho do arquivo .yl ou .py")
@@ -193,15 +195,14 @@ def main():
                 if contem_asyncio_run(codigo_py):
                     main_path = Path(tempdir) / caminho.with_suffix('.py').name
                     projeto_dir = caminho.parent.resolve()
-                    executar_em_subprocesso_via_tempdir(main_path, Path(tempdir), projeto_dir)
-                    return
+                    return executar_em_subprocesso_via_tempdir(main_path, Path(tempdir), projeto_dir)
                 else:
                     exec(codigo_py, globals())
         else:
             codigo = caminho.read_text(encoding="utf-8")
             if contem_asyncio_run(codigo):
                 projeto_dir = caminho.parent.resolve()
-                executar_em_subprocesso_via_tempdir(caminho, caminho.parent, projeto_dir)
+                return executar_em_subprocesso_via_tempdir(caminho, caminho.parent, projeto_dir)
             else:
                 exec(codigo, globals())
 
