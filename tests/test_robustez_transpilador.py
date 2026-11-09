@@ -33,6 +33,17 @@ class RobustezTranspiladorTests(unittest.TestCase):
         codigo = 'classe ordenar:\n    vazio\n'
         self.assertIn('class ordenar:', converter(codigo))
 
+    def test_atributo_nao_e_traduzido(self):
+        codigo = 'obj.adicionar(1)\n'
+        self.assertEqual(converter(codigo), codigo)
+
+    def test_chaves_literais_nao_viram_interpolacao(self):
+        codigo = 'mostrar "JSON: {{valor}}"\n'
+        self.assertEqual(converter(codigo), 'print("JSON: {{valor}}")\n')
+
+    def test_interpolacao_nome_simples_continua_funcionando(self):
+        self.assertEqual(converter('mostrar "Olá {nome}"\n'), 'print(f"Olá {nome}")\n')
+
     def test_conversoes_concorrentes_nao_misturam_strings(self):
         codigos = ['mostrar "texto %d"\n' % n for n in range(80)]
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
