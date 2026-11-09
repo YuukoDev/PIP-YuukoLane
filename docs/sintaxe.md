@@ -107,8 +107,8 @@ mostrar "Olá, " somar nome
 mostrar "Total: {total}"
 ```
 
-Chaves dentro de strings ativam interpolação de f-string Python. Strings e comentários são protegidos durante a tradução para que palavras da linguagem no texto permaneçam intactas.
+Em `mostrar expressão`, strings sem prefixo que contêm campos válidos são convertidas em f-strings. Campos podem incluir expressões e formatos Python. Chaves duplas são preservadas em strings sem campos e representam chaves literais quando há interpolação. Prefixos explícitos, como `r` e `f`, mantêm o comportamento do Python.
 
 ## Identificadores
 
-Use nomes que não sejam palavras reservadas da linguagem ou do Python. A validação atual cobre atribuições simples, mas ainda não todas as formas de declaração e atribuição.
+Use nomes que não sejam palavras reservadas em atribuições. Nomes de funções, classes e parâmetros são preservados nas declarações. Quando um desses nomes coincide com um alias de função ou tipo, suas referências no escopo correspondente preservam a grafia original. A análise lexical não cobre todos os casos de vinculação do Python.

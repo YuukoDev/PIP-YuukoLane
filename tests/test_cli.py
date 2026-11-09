@@ -39,6 +39,26 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("[OK]", output)
         self.assertEqual(status, 1)
 
+    def test_both_validation_modes_show_the_original_source(self):
+        for modo in ("--checar", "--so-transpilar"):
+            with self.subTest(modo=modo):
+                output, status = self.run_cli("retornar 1\n", modo)
+                self.assertEqual(status, 1)
+                self.assertIn('programa.yl", line 1', output)
+                self.assertIn("retornar 1", output)
+                self.assertIn("YK201", output)
+
+    def test_import_errors_point_to_the_local_yl_module(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            main_path = root / "programa.yl"
+            helper_path = root / "auxiliar.yl"
+            main_path.write_text("import auxiliar\n", encoding="utf-8")
+            helper_path.write_text("mostrar (\n", encoding="utf-8")
+            with self.assertRaises(SyntaxError) as erro:
+                carregar_modulos_yl_em_memoria(main_path)
+            self.assertEqual(erro.exception.filename, str(helper_path))
+
     def test_cli_process_exits_nonzero_on_validation_error(self):
         with TemporaryDirectory() as directory:
             source_path = Path(directory) / "ruim.yl"

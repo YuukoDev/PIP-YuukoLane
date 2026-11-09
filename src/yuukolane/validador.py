@@ -1,6 +1,8 @@
-import os
-import re
+import ast
+import io
 import json
+import os
+import tokenize
 
 # Carrega termos reservados do dicionário oficial
 CAMINHO_DICIONARIO = os.path.join(os.path.dirname(__file__), "dicionario.json")
@@ -20,83 +22,142 @@ def contar_indentacao(linha):
     return len(linha) - len(linha.lstrip(' '))
 
 
-def validar_tokens_reservados(codigo):
-    """Impede atribuições para verdadeiro, falso, nulo."""
-    linhas = codigo.splitlines()
-    erros = []
-    atrib_pattern = re.compile(r'^\s*([a-zA-Z_][\w]*)\s*=')
+def _arvore(codigo):
+    try:
+        return ast.parse(codigo)
+    except SyntaxError:
+        # The public validator also accepts the YuukoLane spelling of return.
+        # Only normalize a command position, never an attribute or string.
+        linhas = io.StringIO(codigo).readlines()
+        edicoes = []
+        anterior = tokenize.NEWLINE
+        try:
+            for token in tokenize.generate_tokens(io.StringIO(codigo).readline):
+                if token.type == tokenize.NAME and token.string == "retornar" and (
+                    anterior in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)
+                    or anterior in (":", ";")
+                ):
+                    linha, inicio = token.start
+                    fim = token.end[1]
+                    edicoes.append((linha - 1, inicio, fim))
+                if token.type not in (tokenize.NL, tokenize.COMMENT):
+                    anterior = token.string if token.type == tokenize.OP else token.type
+            for linha, inicio, fim in reversed(edicoes):
+                original = linhas[linha]
+                linhas[linha] = original[:inicio] + "return" + original[fim:]
+            return ast.parse("".join(linhas))
+        except (SyntaxError, tokenize.TokenError):
+            return None  # The transpiler's compile step reports syntax errors.
 
-    for i, linha in enumerate(linhas):
-        if linha.strip().startswith("#"):
-            continue
-        match = atrib_pattern.match(linha)
-        if match:
-            var = match.group(1)
-            if var in TOKENS_PROIBIDOS_ATRIB:
-                erros.append(f"YK101 - Atribuição proibida a literal reservado '{var}' (linha {i+1})")
+
+def _atribuicoes(arvore):
+    for no in ast.walk(arvore):
+        if isinstance(no, ast.Assign):
+            yield from (alvo for alvo in no.targets if isinstance(alvo, ast.Name))
+        elif isinstance(no, (ast.AnnAssign, ast.AugAssign)) and isinstance(no.target, ast.Name):
+            yield no.target
+
+
+def _erros_atribuicao(arvore, literais):
+    erros = []
+    reservados = TOKENS_PROIBIDOS_ATRIB if literais else PALAVRAS_RESERVADAS
+    for alvo in _atribuicoes(arvore):
+        if alvo.id in reservados:
+            mensagem = (f"YK101 - Atribuição proibida a literal reservado '{alvo.id}'"
+                        if literais else
+                        f"YK102 - Identificador reservado '{alvo.id}' usado como variável")
+            erros.append((alvo.lineno, mensagem))
     return erros
+
+
+class _ContextoBlocos(ast.NodeVisitor):
+    def __init__(self):
+        self.escopo = None
+        self.erros = []
+
+    def _visitar_escopo(self, no, escopo):
+        # Defaults, decorators, bases and annotations belong to the
+        # surrounding scope. Only the body belongs to the new scope.
+        for campo, valor in ast.iter_fields(no):
+            if campo == "body":
+                continue
+            if isinstance(valor, ast.AST):
+                self.visit(valor)
+            elif isinstance(valor, list):
+                for item in valor:
+                    if isinstance(item, ast.AST):
+                        self.visit(item)
+        anterior, self.escopo = self.escopo, escopo
+        for item in no.body if isinstance(no.body, list) else [no.body]:
+            self.visit(item)
+        self.escopo = anterior
+
+    def visit_FunctionDef(self, no):
+        self._visitar_escopo(no, "funcao")
+
+    def visit_AsyncFunctionDef(self, no):
+        self._visitar_escopo(no, "async")
+
+    def visit_ClassDef(self, no):
+        self._visitar_escopo(no, None)
+
+    def visit_Lambda(self, no):
+        self._visitar_escopo(no, "funcao")
+
+    def visit_Expr(self, no):
+        if isinstance(no.value, ast.Name) and no.value.id == "retornar":
+            self.visit_Return(no)
+        else:
+            self.generic_visit(no)
+
+    def visit_Return(self, no):
+        if self.escopo is None:
+            self.erros.append((no.lineno, "YK201 - 'retornar' fora de função"))
+        self.generic_visit(no)
+
+    def visit_Await(self, no):
+        if self.escopo != "async":
+            self.erros.append((no.lineno, "YK202 - 'await' fora de função async"))
+        self.generic_visit(no)
+
+
+def _erros_contexto(arvore):
+    validador = _ContextoBlocos()
+    validador.visit(arvore)
+    return validador.erros
+
+
+def _formatar(erros):
+    return [f"{mensagem} (linha {linha})" for linha, mensagem in erros]
+
+
+def validar_tokens_reservados(codigo):
+    arvore = _arvore(codigo)
+    return _formatar(_erros_atribuicao(arvore, True)) if arvore else []
 
 
 def validar_identificadores_proibidos(codigo):
-    """Evita nomes de variáveis que são palavras reservadas."""
-    erros = []
-    linhas = codigo.splitlines()
-    atrib_pattern = re.compile(r'^\s*([a-zA-Z_][\w]*)\s*=')
-
-    for i, linha in enumerate(linhas):
-        if linha.strip().startswith("#"):
-            continue
-        match = atrib_pattern.match(linha)
-        if match:
-            nome = match.group(1)
-            if nome in PALAVRAS_RESERVADAS:
-                erros.append(f"YK102 - Identificador reservado '{nome}' usado como variável (linha {i+1})")
-    return erros
+    arvore = _arvore(codigo)
+    return _formatar(_erros_atribuicao(arvore, False)) if arvore else []
 
 
 def validar_contexto_blocos(codigo):
-    """Valida se 'retornar' está em função e 'await' está em função async."""
-    linhas = codigo.splitlines()
-    escopo = []  # Pilha de escopos: tuplas (tipo, indentacao)
-    erros = []
-
-    for i, linha in enumerate(linhas):
-        linha_sem_espaco = linha.lstrip()
-        if not linha_sem_espaco or linha_sem_espaco.startswith("#"):
-            continue
-
-        indent = contar_indentacao(linha)
-
-        # Remove escopos fechados
-        while escopo and indent <= escopo[-1][1]:
-            escopo.pop()
-
-        # Detecta início de escopos
-        if re.match(r'async\s+def\s+', linha_sem_espaco):
-            escopo.append(("async_funcao", indent))
-        elif re.match(r'def\s+', linha_sem_espaco):
-            escopo.append(("funcao", indent))
-        elif re.match(r'class\s+', linha_sem_espaco):
-            escopo.append(("classe", indent))
-
-        # Valida comandos contextuais
-        if re.search(r'\b(?:retornar|return)\b', linha_sem_espaco):
-            if not escopo or escopo[-1][0] not in ("funcao", "async_funcao"):
-                erros.append(f"YK201 - 'retornar' fora de função (linha {i+1})")
-        if re.search(r'\bawait\b', linha_sem_espaco):
-            if not escopo or escopo[-1][0] != "async_funcao":
-                erros.append(f"YK202 - 'await' fora de função async (linha {i+1})")
-
-    return erros
+    arvore = _arvore(codigo)
+    return _formatar(_erros_contexto(arvore)) if arvore else []
 
 
-def validar_codigo(codigo):
-    """Executa todas as validações sobre o código Python gerado pela YuukoLane."""
-    erros = []
-    erros += validar_tokens_reservados(codigo)
-    erros += validar_identificadores_proibidos(codigo)
-    erros += validar_contexto_blocos(codigo)
-
+def validar_codigo(codigo, filename=None, fonte=None):
+    """Executa as validações YuukoLane sobre o código Python gerado."""
+    arvore = _arvore(codigo)
+    if arvore is None:
+        return True
+    erros = (_erros_atribuicao(arvore, True) + _erros_atribuicao(arvore, False)
+             + _erros_contexto(arvore))
     if erros:
-        raise SyntaxError("\n".join(erros))
+        mensagem = "\n".join(_formatar(erros))
+        if filename is None:
+            raise SyntaxError(mensagem)
+        linha = erros[0][0]
+        linhas = io.StringIO(codigo if fonte is None else fonte).readlines()
+        raise SyntaxError(mensagem, (filename, linha, None, linhas[linha - 1]))
     return True

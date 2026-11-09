@@ -4,11 +4,11 @@ import importlib
 import importlib.util
 import sys
 import tempfile
+import traceback
 import subprocess
 import os
 from pathlib import Path
 from .yuukolane_transpiler import converter
-from .validador import validar_codigo
 
 def carregar_modulos_yl_em_memoria(arquivo_principal: Path, debug=False, salvar_transpilados_em=None):
     """Transpile local imports, stage them as Python modules, and preload them."""
@@ -17,7 +17,7 @@ def carregar_modulos_yl_em_memoria(arquivo_principal: Path, debug=False, salvar_
     if arquivo_principal.suffix != ".yl":
         return codigo_main
 
-    codigo_main = converter(codigo_main)
+    codigo_main = converter(codigo_main, filename=str(arquivo_principal))
     arquivos_modulos = {}
     imports_principais = set()
 
@@ -76,7 +76,7 @@ def carregar_modulos_yl_em_memoria(arquivo_principal: Path, debug=False, salvar_
             pacote_modulo = nome.rpartition(".")[0]
 
         if origem.suffix == ".yl":
-            codigo = converter(origem.read_text(encoding="utf-8"))
+            codigo = converter(origem.read_text(encoding="utf-8"), filename=str(origem))
         else:
             codigo = origem.read_text(encoding="utf-8")
         arquivos_modulos[nome_real] = (origem, codigo)
@@ -149,6 +149,8 @@ def executar_em_subprocesso_via_tempdir(main_py_path: Path, tempdir: Path, proje
         print("🔴 STDERR:")
         print(result.stderr)
 
+    return result.returncode
+
 def main():
     parser = argparse.ArgumentParser(description="Transpila e executa código YuukoLane (.yl)")
     parser.add_argument("arquivo", help="Caminho do arquivo .yl ou .py")
@@ -167,14 +169,13 @@ def main():
     try:
         if args.checar:
             codigo_yl = caminho.read_text(encoding="utf-8")
-            codigo_py = converter(codigo_yl)
-            validar_codigo(codigo_py)
+            converter(codigo_yl, filename=str(caminho))
             print("[OK] Código válido. Nenhum erro encontrado.")
             return
 
         if args.so_transpilar:
             codigo_yl = caminho.read_text(encoding="utf-8")
-            codigo_py = converter(codigo_yl)
+            codigo_py = converter(codigo_yl, filename=str(caminho))
             sys.stdout.write(codigo_py)
             return
 
@@ -193,18 +194,21 @@ def main():
                 if contem_asyncio_run(codigo_py):
                     main_path = Path(tempdir) / caminho.with_suffix('.py').name
                     projeto_dir = caminho.parent.resolve()
-                    executar_em_subprocesso_via_tempdir(main_path, Path(tempdir), projeto_dir)
-                    return
+                    return executar_em_subprocesso_via_tempdir(main_path, Path(tempdir), projeto_dir)
                 else:
                     exec(codigo_py, globals())
         else:
             codigo = caminho.read_text(encoding="utf-8")
             if contem_asyncio_run(codigo):
                 projeto_dir = caminho.parent.resolve()
-                executar_em_subprocesso_via_tempdir(caminho, caminho.parent, projeto_dir)
+                return executar_em_subprocesso_via_tempdir(caminho, caminho.parent, projeto_dir)
             else:
                 exec(codigo, globals())
 
+    except SyntaxError as erro:
+        mensagem = "".join(traceback.format_exception_only(type(erro), erro)).rstrip()
+        print(f"[ERRO] {mensagem}")
+        return 1
     except Exception as e:
         print(f"[ERRO] {e}")
         return 1
