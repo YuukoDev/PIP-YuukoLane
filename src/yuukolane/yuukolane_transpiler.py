@@ -102,8 +102,10 @@ def traduzir_termos(codigo: str, preservar_identificadores=False) -> str:
             # Attribute names (obj.adicionar) are user/API-defined, not keywords.
             if anterior == ".":
                 protegidos.add(t.string)
-            # Parameter names in a function declaration.
-            if any(tok.string in ("def", "definir", "funcao") for tok in tokens[max(0, i - 8):i]) and proximo in (",", ")", "=", ":"):
+            # Parameter declarations are followed by ':' or '=' inside
+            # the function signature. Never protect type annotations or
+            # return annotations merely because a 'def' occurred nearby.
+            if proximo in (":", "=") and anterior in ("(", ","):
                 protegidos.add(t.string)
 
     substituicoes = []
