@@ -197,7 +197,7 @@ def tratar_interpolacao(codigo: str, state) -> str:
     )
 
 
-def converter(codigo_yl: str) -> str:
+def converter(codigo_yl: str, filename: str = "<yuukolane>") -> str:
     state = _new_state(codigo_yl)
     codigo = proteger(codigo_yl, state)
     codigo = traduzir_termos(codigo, preservar_identificadores=True)
@@ -209,7 +209,7 @@ def converter(codigo_yl: str) -> str:
 
     # restauração final de strings e comentários
     codigo = restaurar(codigo, state)
-    compile(codigo, "<yuukolane>", "exec")
+    compile(codigo, filename, "exec")
     return codigo
 
 # ── I/O de arquivo (.yl → .py) ──────────────────────────────────────────────
@@ -217,7 +217,7 @@ def processar_arquivo_yl(path: Path):
     if not path.exists():
         raise FileNotFoundError(f"YK404 - Arquivo {path} não encontrado.")
     codigo_yl = path.read_text(encoding="utf-8")
-    codigo_py = converter(codigo_yl)
+    codigo_py = converter(codigo_yl, filename=str(path))
     destino = path.with_suffix(".py")
     destino.write_text(codigo_py, encoding="utf-8")
     print(f"[OK] Arquivo convertido com sucesso: {destino}")
