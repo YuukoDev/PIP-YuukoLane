@@ -28,7 +28,8 @@ def _arvore(codigo):
     except SyntaxError:
         # The public validator also accepts the YuukoLane spelling of return.
         # Only normalize a command position, never an attribute or string.
-        linhas = codigo.splitlines(keepends=True)
+        linhas = io.StringIO(codigo).readlines()
+        edicoes = []
         anterior = tokenize.NEWLINE
         try:
             for token in tokenize.generate_tokens(io.StringIO(codigo).readline):
@@ -38,10 +39,12 @@ def _arvore(codigo):
                 ):
                     linha, inicio = token.start
                     fim = token.end[1]
-                    original = linhas[linha - 1]
-                    linhas[linha - 1] = original[:inicio] + "return" + original[fim:]
+                    edicoes.append((linha - 1, inicio, fim))
                 if token.type not in (tokenize.NL, tokenize.COMMENT):
                     anterior = token.string if token.type == tokenize.OP else token.type
+            for linha, inicio, fim in reversed(edicoes):
+                original = linhas[linha]
+                linhas[linha] = original[:inicio] + "return" + original[fim:]
             return ast.parse("".join(linhas))
         except (SyntaxError, tokenize.TokenError):
             return None  # The transpiler's compile step reports syntax errors.
@@ -101,6 +104,12 @@ class _ContextoBlocos(ast.NodeVisitor):
     def visit_Lambda(self, no):
         self._visitar_escopo(no, "funcao")
 
+    def visit_Expr(self, no):
+        if isinstance(no.value, ast.Name) and no.value.id == "retornar":
+            self.visit_Return(no)
+        else:
+            self.generic_visit(no)
+
     def visit_Return(self, no):
         if self.escopo is None:
             self.erros.append((no.lineno, "YK201 - 'retornar' fora de função"))
@@ -149,6 +158,6 @@ def validar_codigo(codigo, filename=None, fonte=None):
         if filename is None:
             raise SyntaxError(mensagem)
         linha = erros[0][0]
-        linhas = (codigo if fonte is None else fonte).splitlines(keepends=True)
+        linhas = io.StringIO(codigo if fonte is None else fonte).readlines()
         raise SyntaxError(mensagem, (filename, linha, None, linhas[linha - 1]))
     return True
