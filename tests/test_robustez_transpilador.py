@@ -1,4 +1,6 @@
 import concurrent.futures
+import subprocess
+import sys
 import unittest
 
 from yuukolane.yuukolane_transpiler import converter
@@ -34,8 +36,13 @@ class RobustezTranspiladorTests(unittest.TestCase):
         self.assertIn('class ordenar:', converter(codigo))
 
     def test_atributo_nao_e_traduzido(self):
-        codigo = 'obj.adicionar(1)\n'
-        self.assertEqual(converter(codigo), codigo)
+        class Externo:
+            def adicionar(self, valor):
+                return valor + 1
+
+        contexto = {"obj": Externo()}
+        exec(converter("resultado = obj.adicionar(1)\n"), contexto)
+        self.assertEqual(contexto["resultado"], 2)
 
     def test_chaves_literais_nao_viram_interpolacao(self):
         codigo = 'mostrar "JSON: {{valor}}"\n'
@@ -115,15 +122,102 @@ mostrar "{{total}} {valor + 1:03d}"
     def test_interpolacao_preserva_json_e_prefixos_explicitos(self):
         codigo = """mostrar '{"id": 1}'
 mostrar r"{nome}"
-mostrar f"{obj.ordenar()}" # palavra reservar
+mostrar f"{obj.tipo()}" # palavra reservar
 """
         self.assertEqual(
             converter(codigo),
             """print('{"id": 1}')
 print(r"{nome}")
-print(f"{obj.ordenar()}") # palavra reservar
+print(f"{obj.tipo()}") # palavra reservar
 """,
         )
+
+    def test_alias_funciona_com_parametros_e_receptor_avaliado_uma_vez(self):
+        codigo = """eventos = []
+definir obter():
+    eventos.adicionar("chamada")
+    retornar []
+definir preencher(alvo):
+    acao = alvo.adicionar
+    acao(42)
+    retornar alvo
+resultado = preencher(obter())
+"""
+        contexto = {}
+        exec(converter(codigo), contexto)
+        self.assertEqual(contexto["resultado"], [42])
+        self.assertEqual(contexto["eventos"], ["chamada"])
+
+    def test_atributo_proprio_tem_prioridade_em_subclasse(self):
+        codigo = """classe Colecao(list):
+    definir adicionar(self, valor):
+        retornar valor + 1
+alvo = Colecao()
+resultado = alvo.adicionar(4)
+"""
+        contexto = {}
+        exec(converter(codigo), contexto)
+        self.assertEqual(contexto["resultado"], 5)
+        self.assertEqual(contexto["alvo"], [])
+
+    def test_alias_nao_aplica_em_objeto_externo_com_metodo_ingles(self):
+        class Externo:
+            def append(self, valor):
+                raise AssertionError("append externo")
+
+        with self.assertRaisesRegex(AttributeError, "adicionar"):
+            exec(converter("obj.adicionar(1)"), {"obj": Externo()})
+
+    def test_alias_nao_oculta_attribute_error_de_atributo_proprio(self):
+        class Colecao(list):
+            @property
+            def adicionar(self):
+                raise AttributeError("falha da propriedade")
+
+        with self.assertRaisesRegex(AttributeError, "falha da propriedade"):
+            exec(converter("obj.adicionar(1)"), {"obj": Colecao()})
+
+    def test_alias_preserva_atribuicao_remocao_e_fstrings(self):
+        codigo = """classe Externo:
+    vazio
+obj = Externo()
+obj.copiar = 42
+valor = f"{obj.copiar}"
+del obj.copiar
+nome = "acentuação"; resultado = ({"chave": 1}).copiar().copiar()
+"""
+        contexto = {}
+        exec(converter(codigo), contexto)
+        self.assertEqual(contexto["valor"], "42")
+        self.assertFalse(hasattr(contexto["obj"], "copiar"))
+        self.assertEqual(contexto["resultado"], {"chave": 1})
+
+    def test_python_gerado_roda_sem_importar_o_pacote(self):
+        codigo = "itens = []\nitens.adicionar(7)\nmostrar itens\n"
+        resultado = subprocess.run(
+            [sys.executable, "-I", "-c", converter(codigo)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(resultado.stdout, "[7]\n")
+
+    def test_alias_preserva_anotacoes_postergadas(self):
+        codigo = """from __future__ import annotations
+definir f(x: obj.copiar):
+    retornar x
+itens = [].copiar()
+"""
+        contexto = {}
+        exec(converter(codigo), contexto)
+        self.assertEqual(contexto["f"].__annotations__["x"], "obj.copiar")
+
+    def test_alias_preserva_docstring_e_future_import(self):
+        codigo = '"""Módulo"""\nfrom __future__ import annotations; resultado = [1].contar(1)'
+        contexto = {}
+        exec(converter(codigo), contexto)
+        self.assertEqual(contexto["__doc__"], "Módulo")
+        self.assertEqual(contexto["resultado"], 1)
 
     def test_interpolacao_em_string_multilinha_preserva_as_linhas(self):
         codigo = 'mostrar """Olá\n{nome}""" # fim\nmostrar 42\n'

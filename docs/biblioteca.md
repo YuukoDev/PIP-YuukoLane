@@ -63,4 +63,6 @@ nomes.ordenar()
 
 `classe` traduz para `class`; `global` permanece `global`; `nao local` traduz para `nonlocal`; `em` traduz para `in`; `del` e `lambda` permanecem iguais. `is` também permanece igual.
 
-Os aliases de métodos são reconhecidos em variáveis com uma única atribuição anterior a uma lista literal ou a `lista vazia`, no mesmo escopo. Atributos de outros objetos mantêm os nomes definidos pela API.
+O nome depois do ponto tem prioridade. Se um objeto define `adicionar`, esse atributo é usado. Se o atributo está ausente e o receptor é uma coleção embutida do Python com o método correspondente, YuukoLane usa o alias. A regra vale para listas passadas como parâmetros ou retornadas por funções. Para outros objetos, um atributo ausente gera o erro normal do Python.
+
+A regra cobre leituras de atributos e chamadas comuns. Atribuições, exclusões, nomes em padrões, anotações, referências a decoradores e rótulos de f-strings de depuração mantêm a sintaxe de atributo do Python.

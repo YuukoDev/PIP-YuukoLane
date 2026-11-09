@@ -7,7 +7,6 @@ _ABRE = {"(", "[", "{"}
 _FECHA = {")", "]", "}"}
 _DECLARACOES = {"def", "definir", "funcao", "class", "classe"}
 _CLASSES = {"class", "classe"}
-_METODOS = {"adicionar", "remover", "ordenar", "reverter", "contar", "indexar", "copiar"}
 
 
 class _Escopo:
@@ -15,7 +14,6 @@ class _Escopo:
         self.pai = pai
         self.classe = classe
         self.nomes = set()
-        self.atribuicoes = {}
 
     def vincula(self, nome):
         escopo = self
@@ -67,7 +65,6 @@ def analisar_identificadores(tokens):
     blocos = [raiz]
     escopos = {}
     literais = set()
-    atributos = []
     pendente = None
     partes = []
 
@@ -86,15 +83,12 @@ def analisar_identificadores(tokens):
             if token.type == tokenize.NAME:
                 if anterior == "." or importacao:
                     literais.add(indice)
-                    if anterior == "." and pos >= 2 and termo in _METODOS and not importacao:
-                        atributos.append((indice, indices[pos - 2], escopo))
                 if anterior == "as":
                     literais.add(indice)
                     escopo.nomes.add(termo)
                 if seguinte == "=" and profundidade and anterior in {"(", ","}:
                     literais.add(indice)
                 if pos == 0 and seguinte in {"=", "atribuir"}:
-                    escopo.atribuicoes.setdefault(termo, []).append((indice, termos[2:]))
                     # Keep simple assignment targets intact for YK101/YK102.
                     literais.add(indice)
             if termo in _ABRE:
@@ -141,33 +135,4 @@ def analisar_identificadores(tokens):
         else:
             partes.append(indice)
 
-    for indice, receptor, escopo in atributos:
-        # Only infer a collection for a simple receiver with one earlier
-        # assignment. Unknown and external objects keep their API names.
-        nome = tokens[receptor].string
-        atribuicoes = escopo.atribuicoes.get(nome, [])
-        if receptor >= 1 and tokens[receptor - 1].string == ".":
-            continue
-        if len(atribuicoes) != 1:
-            continue
-        pos, valor = atribuicoes[0]
-        if pos < receptor and _lista_literal(valor):
-            literais.discard(indice)
-
     return literais, escopos
-
-
-def _lista_literal(valor):
-    if valor == ["lista", "vazia"]:
-        return True
-    if not valor or valor[0] != "[":
-        return False
-    profundidade = 0
-    for pos, termo in enumerate(valor):
-        if termo in _ABRE:
-            profundidade += 1
-        elif termo in _FECHA:
-            profundidade -= 1
-            if profundidade == 0:
-                return pos == len(valor) - 1
-    return False

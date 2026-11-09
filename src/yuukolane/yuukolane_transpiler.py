@@ -9,6 +9,7 @@ import sys
 import tokenize
 import uuid
 from pathlib import Path
+from ._colecoes import ALIASES_COLECOES, resolver_aliases
 from ._contexto import analisar_identificadores
 from .validador import validar_codigo
 
@@ -264,6 +265,12 @@ def converter(codigo_yl: str, filename: str = "<yuukolane>") -> str:
         codigo = restaurar(codigo, state)
         validar_codigo(codigo, filename, codigo_yl)
         compile(codigo, filename, "exec")
+        if "." in codigo and any(alias in codigo for alias in ALIASES_COLECOES):
+            nome = "_yk_colecao"
+            while nome in codigo:
+                nome += "_"
+            codigo = resolver_aliases(codigo, ast.parse(codigo), nome)
+            compile(codigo, filename, "exec")
     except tokenize.TokenError as erro:
         mensagem, (linha, coluna) = erro.args
         if linha > len(linhas) and linhas:
