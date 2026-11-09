@@ -99,6 +99,12 @@ def traduzir_termos(codigo: str, preservar_identificadores=False) -> str:
                 protegidos.add(t.string)
             if proximo == "=" and (anterior in ("", "(", ",") or t.start[1] == 0):
                 protegidos.add(t.string)
+            # Attribute names (obj.adicionar) are user/API-defined, not keywords.
+            if anterior == ".":
+                protegidos.add(t.string)
+            # Parameter names in a function declaration.
+            if any(tok.string in ("def", "definir", "funcao") for tok in tokens[max(0, i - 8):i]) and proximo in (",", ")", "=", ":"):
+                protegidos.add(t.string)
 
     substituicoes = []
     indice_nome = 0
@@ -110,6 +116,8 @@ def traduzir_termos(codigo: str, preservar_identificadores=False) -> str:
                 continue
             grupo = nomes[indice_nome:indice_nome + len(partes)]
             if tuple(item[1].string for item in grupo) != partes:
+                continue
+            if preservar_identificadores and any(item[1].string in protegidos for item in grupo):
                 continue
             if any(
                 not re.fullmatch(r"[ \t]+", codigo[grupo[pos][3]:grupo[pos + 1][2]])
@@ -176,7 +184,9 @@ def tratar_interpolacao(codigo: str, state) -> str:
             if token not in expressao:
                 continue
             string = state['strings'][token]
-            if '{' in string and '}' in string and not re.match(r'(?i)(?:f|fr|rf)[\'"]', string):
+            if ('{' in string and '}' in string and
+                    not re.match(r'(?i)(?:f|fr|rf|r|b|u|br|rb)[\'"]', string) and
+                    re.search(r'(?<!\{)\{[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*\}', string)):
                 state['strings'][token] = 'f' + string
         return f"{indent}print({expressao}){comentario}"
 
