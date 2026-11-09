@@ -210,11 +210,8 @@ def converter(codigo_yl: str, filename: str = "<yuukolane>") -> str:
     codigo = corrigir_comparacoes(codigo)
     codigo = tratar_interpolacao(codigo, state)
 
-    # VALIDAÇÃO com strings e comentários protegidos
-    validar_codigo(codigo)
-
-    # restauração final de strings e comentários
     codigo = restaurar(codigo, state)
+    validar_codigo(codigo, filename, codigo_yl)
     compile(codigo, filename, "exec")
     return codigo
 
